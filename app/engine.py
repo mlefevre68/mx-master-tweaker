@@ -93,6 +93,7 @@ class Engine:
         self.dispatcher = Dispatcher()
         self._held: dict[str, Held] = {}
         self._wheel_remainder: dict[str, int] = {}
+        self._seen: set[tuple[str, str]] = set()
         self._observers: list = []
         self._lock = threading.Lock()
 
@@ -103,6 +104,9 @@ class Engine:
         # Anything mid-hold was decided against the old rules; start clean.
         self._held.clear()
         self._wheel_remainder.clear()
+        # Report the first use of each binding again, so the log shows the new set
+        # proving itself rather than staying silent about it.
+        self._seen.clear()
 
     def add_observer(self, callback) -> None:
         with self._lock:
@@ -221,7 +225,9 @@ class Engine:
         if not self._held:
             return
         threshold = self._threshold
-        for held in self._held.values():
+        # A copy, because the gesture button arrives on its own thread and can add or
+        # remove an entry while the hook is part-way through this loop.
+        for held in list(self._held.values()):
             if held.far:
                 continue
             dx = info.pt.x - held.origin[0]
@@ -258,7 +264,7 @@ class Engine:
             return False
         delta = w.high_word_signed(info.mouseData)
         slot = "wheel_up" if delta > 0 else "wheel_down"
-        for source, held in self._held.items():
+        for source, held in list(self._held.items()):
             if self.config.binding(source, slot) is None:
                 continue
             for _ in range(self._notches(f"{source}:{slot}", abs(delta))):
@@ -314,7 +320,14 @@ class Engine:
             return
         if action_id == "none":
             return
-        log.debug("%s %s -> %s %s", source, slot, action_id, binding.get("value", ""))
+        # The first time a binding fires it is recorded plainly, so the log answers
+        # "is this thing working at all?" without having to be turned up first. After
+        # that it drops to debug, because a volume roll would otherwise fill the file.
+        if (source, slot) in self._seen:
+            log.debug("%s %s -> %s %s", source, slot, action_id, binding.get("value", ""))
+        else:
+            self._seen.add((source, slot))
+            log.info("%s %s -> %s %s", source, slot, action_id, binding.get("value", ""))
         self._observe("action", f"{source} {slot} -> {action_id}")
         self.dispatcher.submit(action_id, binding.get("value", ""))
 

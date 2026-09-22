@@ -38,10 +38,18 @@ That is the way out of a gesture you did not mean to start.
 About the gesture button
 
 The gesture button is the wide flat one under your thumb. Windows has no standard slot \
-for a sixth mouse button, so whether this app can see it depends on how your mouse is \
-connected and what it is sending. Open the Detect tab, turn detection on, and press it: \
-if anything appears, it can be bound. Everything else here - the thumb wheel, the two \
-small thumb buttons and the wheel click - always works.
+for a sixth mouse button, so it is never delivered as one - not to this app, and not to \
+anything else. Instead the mouse is asked, over Logitech's own protocol, to stop \
+handling that button itself and report it separately. That is what the switch at the \
+bottom of its page does.
+
+The status line under that switch says whether it is actually working. If it says \
+anything other than Working, the bindings on this page will do nothing, and the thumb \
+wheel and the two small thumb buttons are the ones to use instead.
+
+The mouse forgets this arrangement whenever it sleeps and reconnects, so the app quietly \
+re-applies it. Turning the switch off, or quitting the app, hands the button straight \
+back.
 
 Where things are kept
 
@@ -303,9 +311,37 @@ class SettingsWindow:
         for button in cfg.BUTTONS:
             self.panels[button.id] = self._build_panel(
                 self.detail, button.id, button.label, button.hint, cfg.SLOTS)
+        self._build_gesture_extras(self.panels["gesture"], len(cfg.SLOTS) + 2)
         self._refresh_button_list()
         self.button_list.selection_set(0)
         self._on_button_selected()
+
+    def _build_gesture_extras(self, panel: ttk.Frame, row: int) -> None:
+        """The gesture button needs a switch and an honest status of its own.
+
+        It is the one button whose bindings can fail to work for reasons that have
+        nothing to do with what you bound to it, so the window says plainly whether it
+        is reaching the mouse.
+        """
+        ttk.Separator(panel, orient="horizontal").grid(
+            row=row, column=0, columnspan=5, sticky="ew", pady=(16, 10))
+
+        self.use_gesture = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            panel, variable=self.use_gesture, command=self.touch,
+            text="Reach the gesture button through Logitech's own protocol"
+        ).grid(row=row + 1, column=0, columnspan=5, sticky="w")
+
+        ttk.Label(panel, foreground="#666", wraplength=620, justify="left", text=(
+            "Windows has no slot for a sixth mouse button, so the mouse has to be asked "
+            "to report this one. Turn it off to leave the mouse's own configuration "
+            "completely alone; the other buttons are unaffected either way.")
+        ).grid(row=row + 2, column=0, columnspan=5, sticky="w", pady=(2, 8))
+
+        self.gesture_status = tk.StringVar(value="")
+        self.gesture_label = ttk.Label(panel, textvariable=self.gesture_status,
+                                       font=("Segoe UI", 9, "bold"))
+        self.gesture_label.grid(row=row + 3, column=0, columnspan=5, sticky="w")
 
     def _build_panel(self, parent: tk.Misc, source: str, title: str, hint: str,
                      slots: tuple[cfg.Slot, ...]) -> ttk.Frame:
@@ -409,6 +445,7 @@ class SettingsWindow:
         config = self.app.config
         self.enabled.set(config.enabled)
         self.invert.set(bool(config.setting("invert_thumbwheel", False)))
+        self.use_gesture.set(bool(config.setting("use_gesture_button", True)))
         self.move_threshold.set(int(config.setting("move_threshold", 30)))
         self.tap_milliseconds.set(int(config.setting("tap_milliseconds", 700)))
         self.wheel_notch.set(int(config.setting("wheel_notch", 120)))
@@ -439,6 +476,7 @@ class SettingsWindow:
         self.app.config.enabled = bool(self.enabled.get())
         self.app.config.settings.update({
             "invert_thumbwheel": bool(self.invert.get()),
+            "use_gesture_button": bool(self.use_gesture.get()),
             "move_threshold": int(self.move_threshold.get()),
             "tap_milliseconds": int(self.tap_milliseconds.get()),
             "wheel_notch": int(self.wheel_notch.get()),
@@ -570,6 +608,21 @@ class SettingsWindow:
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
 
+    # -- the gesture button's status --------------------------------------
+
+    def _poll_gesture(self) -> None:
+        status = self.app.gesture_status()
+        wording = {
+            "active": ("Working - the gesture button is reaching this app", "#0a7"),
+            "searching": ("Looking for the mouse", "#b60"),
+            "failed": ("Not available", "#c00"),
+            "off": ("Turned off", "#666"),
+        }.get(status.state, ("Unknown", "#666"))
+        self.gesture_status.set(f"{wording[0]}  ({status.detail})")
+        self.gesture_label.configure(foreground=wording[1])
+        if self._observing and self.window.winfo_exists():
+            self.window.after(1000, self._poll_gesture)
+
     # -- showing and hiding ------------------------------------------------
 
     def show(self) -> None:
@@ -581,6 +634,7 @@ class SettingsWindow:
             self.app.engine.add_observer(self.observe)
             self._observing = True
             self.window.after(120, self._drain)
+            self.window.after(50, self._poll_gesture)
 
     def hide(self) -> None:
         if self.dirty and messagebox.askyesno(

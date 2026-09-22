@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import config as cfg  # noqa: E402
 from app.engine import Engine  # noqa: E402
+from app.hidpp import Status  # noqa: E402
 
 try:
     import tkinter as tk
@@ -47,6 +48,7 @@ class FakeApp:
         self.host = FakeHost()
         self.saved = 0
         self.logon = False
+        self.gesture_state = Status("active", "Fake mouse")
 
     def save(self) -> None:
         # Deliberately does not write to disk: a test must not overwrite real settings.
@@ -64,6 +66,9 @@ class FakeApp:
         # Never touches the real scheduled task.
         self.logon = wanted
         return True
+
+    def gesture_status(self) -> Status:
+        return self.gesture_state
 
 
 @unittest.skipIf(_root is None, "no desktop available for Tk")
@@ -213,6 +218,21 @@ class SettingsWindowTests(unittest.TestCase):
         self.assertEqual(self.app.config.setting("tap_milliseconds", 0), 400)
         self.assertEqual(self.app.config.setting("wheel_notch", 0), 240)
         self.assertTrue(self.app.config.setting("invert_thumbwheel", False))
+
+    def test_the_gesture_button_can_be_switched_off(self):
+        self.assertTrue(self.window.use_gesture.get())
+        self.window.use_gesture.set(False)
+        self.window.apply()
+        self.assertFalse(self.app.config.setting("use_gesture_button", True))
+
+    def test_the_gesture_status_says_what_is_happening(self):
+        self.app.gesture_state = Status("active", "Fake mouse")
+        self.window._poll_gesture()
+        self.assertIn("Working", self.window.gesture_status.get())
+        self.app.gesture_state = Status("failed", "No good")
+        self.window._poll_gesture()
+        self.assertIn("Not available", self.window.gesture_status.get())
+        self.assertIn("No good", self.window.gesture_status.get())
 
     # -- the detector ------------------------------------------------------
 

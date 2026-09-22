@@ -111,6 +111,10 @@ def defaults() -> dict:
             "wheel_notch": 120,
             "invert_thumbwheel": False,
             "show_notifications": True,
+            # The gesture button is only reachable by asking the mouse itself to report
+            # it, over Logitech's own protocol. Turn this off to leave the mouse's
+            # configuration completely untouched.
+            "use_gesture_button": True,
         },
         "bindings": {
             "thumbwheel": {

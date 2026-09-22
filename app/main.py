@@ -21,7 +21,7 @@ import sys
 import tkinter as tk
 from tkinter import messagebox
 
-from . import config as cfg, startup, winapi as w
+from . import config as cfg, hidpp, startup, winapi as w
 from .engine import Engine
 from .host import Host, WINDOW_CLASS
 from .ui import SettingsWindow
@@ -51,6 +51,8 @@ class App:
         self.config = cfg.load()
         self.engine = Engine(self.config)
         self.settings: SettingsWindow | None = None
+        self.gesture: hidpp.GestureButton | None = None
+        self.gesture_state = hidpp.Status("off", "Not started")
         self._requests: queue.Queue = queue.Queue()
         self._open_settings_at_start = open_settings
 
@@ -107,6 +109,31 @@ class App:
         if self.settings is not None:
             self.settings.observe_raw(described)
 
+    # -- the gesture button ------------------------------------------------
+
+    def _sync_gesture(self) -> None:
+        """Start or stop the gesture button listener to match the settings."""
+        wanted = bool(self.config.setting("use_gesture_button", True))
+        if wanted and self.gesture is None:
+            self.gesture = hidpp.GestureButton(self._on_gesture, self._on_gesture_status)
+            self.gesture.start()
+        elif not wanted and self.gesture is not None:
+            self.gesture.stop()
+            self.gesture = None
+            self.gesture_state = hidpp.Status("off", "Turned off in the settings")
+
+    def _on_gesture(self, pressed: bool, position: tuple[int, int]) -> None:
+        """A gesture button press, arriving on the listener's own thread."""
+        self.engine.on_button("gesture", pressed, position)
+
+    def _on_gesture_status(self, status) -> None:
+        # A plain assignment, read by the settings window on its own timer. Touching Tk
+        # from this thread would not be safe.
+        self.gesture_state = status
+
+    def gesture_status(self):
+        return self.gesture_state
+
     # -- what the app can be asked to do ----------------------------------
 
     def show_settings(self) -> None:
@@ -132,12 +159,19 @@ class App:
     def save(self) -> None:
         cfg.save(self.config)
         self.engine.set_config(self.config)
+        self._sync_gesture()
         self.host.refresh_tray()
         log.info("Settings applied (bindings %s)",
                  "on" if self.config.enabled else "off")
 
     def quit(self) -> None:
         log.info("Shutting down")
+        if self.gesture is not None:
+            # Give it a moment to hand the gesture button back to the mouse before the
+            # process goes away.
+            self.gesture.stop()
+            self.gesture.join(timeout=2.0)
+            self.gesture = None
         self.engine.stop()
         self.host.request_quit()
         self.root.quit()
@@ -153,6 +187,7 @@ class App:
                 f"remapped.\n\nThe log may say why:\n{cfg.logs_dir()}")
             return 1
         log.info("Running. Settings: %s", cfg.config_path())
+        self._sync_gesture()
         if self._open_settings_at_start:
             self.show_settings()
         self.root.after(80, self._pump)

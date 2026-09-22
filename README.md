@@ -8,8 +8,12 @@ between virtual desktops. Bind any button to mute Teams, or to a key combination
 own, or to a program.
 
 It runs from the notification area, starts when you sign in, and is configured from a
-settings window. It is about 2,000 lines of Python using nothing but the standard
+settings window. It is about 2,500 lines of Python using nothing but the standard
 library, so there is nothing to install beyond Python itself.
+
+The gesture button - the wide one under your thumb - is reached the same way Logitech's
+own software reaches it, by asking the mouse to report it over HID++. Everything else
+goes through an ordinary Windows mouse hook.
 
 **Nothing leaves this machine.** There is no account, no background service, no
 telemetry and no network code of any kind - not even a disabled one. The app talks to
@@ -83,21 +87,43 @@ browser navigation and tabs, copy/paste/undo, zoom, scrolling - plus two open-en
   how you reach anything the list does not already cover.
 - **Open a program or file...** - anything you can double-click.
 
-## Finding the gesture button
+## The gesture button
 
-The gesture button is the wide flat one your thumb rests on. It is the only button here
-that is not guaranteed to work, because Windows has no standard slot for a sixth mouse
-button and what the mouse sends depends on how it is paired.
+The gesture button is the wide flat one your thumb rests on, and it takes more than a
+mouse hook to reach.
 
-Open the settings window, go to **Detect**, turn on **Deep listening**, and press it.
+The MX Master's report descriptor declares sixteen buttons. Windows' mouse driver and
+its raw input API both stop at five, so the gesture button is never delivered to
+anything - not to this app, not to any application, not even as an unknown button. It is
+simply not there.
 
-- If something appears, the button is reachable and its bindings will work.
-- If nothing appears, Windows genuinely is not being told about that button, and no
-  software running as a normal user can bind it. Use the thumb wheel or a thumb button
-  instead - they always work.
+Logitech's own software does not read it as a mouse button either. It talks to the mouse
+over **HID++**, a request/response protocol carried on a separate vendor-defined HID
+collection that Windows does not claim exclusively, and asks the device to stop handling
+that button itself and report it as a notification instead. This app does the same
+thing: find the vendor collection, look up feature `0x1B04`, divert control `0x00C3`,
+and listen.
 
-The same panel shows every button, wheel and raw HID report the machine receives, which
-is also the quickest way to work out why a binding is not firing.
+All of that is local. It is a read and a write to one HID device node on this machine,
+needs no elevation, installs nothing, and loads no driver.
+
+Two consequences worth knowing:
+
+- **The mouse forgets when it reconnects.** Diversion on this control is temporary by
+  design, so the app re-applies it periodically and after every reconnection.
+- **While diverted, the button does nothing on its own.** On Windows that costs nothing,
+  because it did nothing to begin with. Turning the switch off in the settings, or
+  quitting the app, hands it straight back.
+
+The switch and a live status line are at the bottom of the gesture button's page. If
+that line does not say *Working*, the bindings on that page will do nothing - and the
+thumb wheel and the two small thumb buttons are unaffected either way.
+
+## Finding out what your mouse sends
+
+The **Detect** tab shows every button, wheel and raw HID report the machine receives.
+Turn on **Deep listening** to include raw reports from every device, including the
+vendor collections. It is the quickest way to work out why a binding is not firing.
 
 ## Starting with Windows
 
@@ -114,9 +140,14 @@ can only see input on a real, signed-in desktop.
 
 ## Troubleshooting
 
-**A binding does nothing.** Check the tray menu says *Bindings active*. Then open
+**A binding does nothing.** Check the tray menu says *Bindings active*. For the gesture
+button, check the status line on its page says *Working*. For anything else, open
 **Detect** and press the button: if it does not appear there, Windows is not delivering
 it to this app at all.
+
+**The gesture button stopped working.** The mouse forgets diversion when it sleeps. The
+app re-applies it within a few minutes and immediately on reconnection; the log records
+every change of status.
 
 **Everything stopped working after a while.** Windows removes a low-level hook that takes
 too long to answer, and some remote-desktop and screen-sharing tools install hooks of
@@ -150,6 +181,7 @@ no registry keys, services or drivers are ever created.
 | --- | --- |
 | `app/winapi.py` | The Win32 calls, bound by hand with ctypes |
 | `app/host.py` | The hidden window, the mouse hook and the tray icon |
+| `app/hidpp.py` | Talking to the mouse itself, to reach the gesture button |
 | `app/engine.py` | Turning presses, gestures and scrolls into actions |
 | `app/actions.py` | Everything a binding can do |
 | `app/config.py` | The settings file and the binding model |
@@ -158,8 +190,9 @@ no registry keys, services or drivers are ever created.
 
 Three threads: Tk owns the main thread because it is not thread safe; the hook needs a
 thread that never blocks and does nothing but pump messages; the actions run on a third,
-so that nothing slow ever happens inside the hook. They only talk through queues and
-posted window messages.
+so that nothing slow ever happens inside the hook. A fourth appears when the gesture
+button is in use, sitting on a blocking read from the mouse. They only talk through
+queues and posted window messages.
 
 Run the tests with:
 
@@ -169,6 +202,10 @@ python -m unittest discover -s tests
 
 ## Scope
 
-Written for a Logitech MX Master 3, but there is nothing Logitech-specific in it: the
-wheel click, the two side buttons and a horizontal wheel work on any mouse that has them.
+Written for a Logitech MX Master 3. The wheel click, the two side buttons and the thumb
+wheel work on any mouse that has them, because they go through the ordinary Windows
+mouse hook. The gesture button is the Logitech-specific part: it needs a device that
+speaks HID++ and is willing to divert control `0x00C3`, which covers the MX Master
+family and most recent Logitech mice, over Bluetooth or a Unifying/Bolt receiver.
+
 Bindings are global - there are no per-application profiles.
