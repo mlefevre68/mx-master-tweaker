@@ -251,7 +251,13 @@ class Engine:
     def _passthrough(self, source: str) -> None:
         recipe = PASSTHROUGH.get(source)
         if recipe is None:
-            return  # a button Windows does not have; there is nothing to pass through
+            # Nothing to replay. The gesture button is the case that matters: the mouse
+            # reports it as button 6 and the Windows mouse driver maps only 1 to 5, so
+            # no event ever existed to hand back. Settings written by an older version
+            # can still ask for this, so say why rather than appearing to do it.
+            log.warning("%r has no event of its own for Windows, so there is nothing "
+                        "to pass through; bind an action to it instead", source)
+            return
         down, up, data = recipe
         w.send_inputs([w.mouse_input(down, data=data << 16),
                        w.mouse_input(up, data=data << 16)])

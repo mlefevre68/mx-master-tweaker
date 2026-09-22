@@ -32,6 +32,10 @@ already made it do. As soon as you bind anything to a button, the whole button b
 to this app - so if you still want a quick press to do its original job, set Press to \
 "Pass through".
 
+"Pass through" is offered for the Back and Forward buttons and the wheel click, because \
+Windows has an event of its own for each of those to hand back. It is not offered for \
+the gesture button, which Windows never receives at all - see below.
+
 Holding a button still for longer than the press time and then releasing does nothing. \
 That is the way out of a gesture you did not mean to start.
 
@@ -148,7 +152,7 @@ class SlotRow:
         ttk.Label(parent, text=slot.label, width=18).grid(
             row=row, column=0, sticky="w", pady=3)
 
-        self.choices = window.choices_for(slot.id)
+        self.choices = window.choices_for(source, slot.id)
         self.action = tk.StringVar(value=LEAVE_ALONE)
         self.combo = ttk.Combobox(parent, textvariable=self.action, state="readonly",
                                   values=list(self.choices), width=38)
@@ -236,14 +240,20 @@ class SettingsWindow:
 
     # -- action lists ------------------------------------------------------
 
-    def choices_for(self, slot_id: str) -> dict[str, str]:
-        """Display text to action id, in catalogue order, for one kind of trigger."""
+    def choices_for(self, source: str, slot_id: str) -> dict[str, str]:
+        """Display text to action id, in catalogue order, for one trigger.
+
+        What is offered depends on the button as well as the trigger: passing a button
+        "through" is only meaningful where Windows has an event of its own to replay.
+        """
         items = {LEAVE_ALONE: None}
         for action in actions.CATALOGUE:
-            # Passing a gesture or a scroll "through" has no meaning: there is no
-            # original event to replay.
-            if action.id == "passthrough" and slot_id != "tap":
-                continue
+            if action.id == "passthrough":
+                # Passing a gesture or a scroll through has no meaning - there is no
+                # original event to replay - and nor does it for a button Windows
+                # never receives in the first place.
+                if slot_id != "tap" or not cfg.passes_through(source):
+                    continue
             items[f"{action.group}:  {action.label}"] = action.id
         return items
 
@@ -335,7 +345,10 @@ class SettingsWindow:
         ttk.Label(panel, foreground="#666", wraplength=620, justify="left", text=(
             "Windows has no slot for a sixth mouse button, so the mouse has to be asked "
             "to report this one. Turn it off to leave the mouse's own configuration "
-            "completely alone; the other buttons are unaffected either way.")
+            "completely alone; the other buttons are unaffected either way.\n\n"
+            "This is also why there is no \"Pass through\" for this button: Windows "
+            "never receives it on its own, so there is no normal behaviour to give "
+            "back. Leave a trigger unset to ignore it.")
         ).grid(row=row + 2, column=0, columnspan=5, sticky="w", pady=(2, 8))
 
         self.gesture_status = tk.StringVar(value="")

@@ -45,19 +45,31 @@ class Button:
     id: str
     label: str
     hint: str
+    # Whether Windows has an event of its own for this button that can be replayed.
+    # The gesture button has none: the mouse reports it as button 6, and the Windows
+    # mouse driver maps only buttons 1 to 5, so nothing receives it and there is
+    # nothing to hand back. That is the whole reason it needs HID++ to be seen at all.
+    passes_through: bool = True
 
 
 # Only buttons that are safe to take over. Left and right click are deliberately absent:
 # a mistake there leaves you with a mouse you cannot use to fix the mistake.
 BUTTONS: tuple[Button, ...] = (
     Button("gesture", "Gesture button",
-           "The big flat button under your thumb, where your thumb rests"),
+           "The big flat button under your thumb, where your thumb rests",
+           passes_through=False),
     Button("x1", "Back button", "The lower of the two small thumb buttons"),
     Button("x2", "Forward button", "The upper of the two small thumb buttons"),
     Button("middle", "Wheel click", "Pressing the main scroll wheel down"),
 )
 
 BUTTON_BY_ID: dict[str, Button] = {button.id: button for button in BUTTONS}
+
+
+def passes_through(source: str) -> bool:
+    """Whether "Pass through" means anything for this button."""
+    button = BUTTON_BY_ID.get(source)
+    return button.passes_through if button else False
 
 
 @dataclass(frozen=True)
@@ -184,8 +196,15 @@ def _clean(raw: dict) -> dict:
             if isinstance(entry, str):  # tolerate the shorthand {"tap": "copy"}
                 entry = {"action": entry}
             if isinstance(entry, dict) and entry.get("action"):
-                kept[slot] = {"action": str(entry["action"]),
-                              "value": str(entry.get("value", ""))}
+                action = str(entry["action"])
+                # "Pass through" on a button Windows never sees would sit in the
+                # settings looking like a choice and do nothing whatsoever. It means
+                # exactly what "Nothing" means there, so say so.
+                if action == "passthrough" and not passes_through(source):
+                    log.info("%r cannot pass through, so its press is set to nothing",
+                             source)
+                    action = "none"
+                kept[slot] = {"action": action, "value": str(entry.get("value", ""))}
         if kept:
             bindings[source] = kept
 
@@ -217,7 +236,29 @@ def load() -> Config:
         except OSError:
             pass
         return default_config()
-    return Config(**_clean(raw if isinstance(raw, dict) else {}))
+    config = Config(**_clean(raw if isinstance(raw, dict) else {}))
+
+    # If anything had to be rewritten to mean what it actually does, put that back on
+    # disk. Otherwise the file would keep saying "pass through" for a button that
+    # cannot, and the settings window and the file would disagree about the truth.
+    if _needs_rewriting(raw if isinstance(raw, dict) else {}):
+        try:
+            save(config)
+        except OSError:
+            log.warning("Could not rewrite %s; carrying on with the cleaned settings",
+                        path)
+    return config
+
+
+def _needs_rewriting(raw: dict) -> bool:
+    for source, slots in (raw.get("bindings") or {}).items():
+        if not isinstance(slots, dict) or passes_through(source):
+            continue
+        for entry in slots.values():
+            action = entry.get("action") if isinstance(entry, dict) else entry
+            if action == "passthrough":
+                return True
+    return False
 
 
 def save(config: Config) -> None:

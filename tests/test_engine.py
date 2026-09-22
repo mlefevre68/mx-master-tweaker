@@ -253,6 +253,31 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(config.is_bound("x1"))
         self.assertFalse(config.is_bound("middle"))
 
+    def test_pass_through_on_the_gesture_button_becomes_nothing(self):
+        # Windows never receives that button, so there is no event to replay. Keeping
+        # the setting would leave a press that looks configured and does nothing.
+        from app.config import _clean
+        cleaned = _clean({"bindings": {"gesture": {"tap": {"action": "passthrough"}}}})
+        self.assertEqual(cleaned["bindings"]["gesture"]["tap"]["action"], "none")
+
+    def test_pass_through_is_kept_for_buttons_that_have_it(self):
+        from app.config import _clean
+        cleaned = _clean({"bindings": {
+            "x1": {"tap": {"action": "passthrough"}},
+            "x2": {"tap": {"action": "passthrough"}},
+            "middle": {"tap": {"action": "passthrough"}},
+        }})
+        for source in ("x1", "x2", "middle"):
+            self.assertEqual(cleaned["bindings"][source]["tap"]["action"], "passthrough")
+
+    def test_which_buttons_can_pass_through(self):
+        from app.config import passes_through
+        self.assertFalse(passes_through("gesture"))
+        self.assertTrue(passes_through("x1"))
+        self.assertTrue(passes_through("x2"))
+        self.assertTrue(passes_through("middle"))
+        self.assertFalse(passes_through("thumbwheel"))
+
 
 class ComboTests(unittest.TestCase):
     def test_a_plain_combination(self):

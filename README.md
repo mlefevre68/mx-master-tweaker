@@ -82,6 +82,11 @@ Two rules are worth knowing:
   "hold + scroll" on the Back button and still want a quick press to go back, set
   **Press** to **Pass through**, which replays the original button.
 
+**Pass through** is available for the Back and Forward buttons and the wheel click.
+It is deliberately **not** offered for the gesture button: Windows never receives that
+button in the first place, so there is no original behaviour to give back. Leave a
+trigger unset if you want the gesture button to ignore it.
+
 If you start a gesture and change your mind, hold the button still for longer than the
 press time (700 ms by default) and let go. Nothing happens.
 

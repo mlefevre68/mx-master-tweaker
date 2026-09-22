@@ -162,6 +162,19 @@ class SettingsWindowTests(unittest.TestCase):
         self.assertIn("passthrough", press.values())
         self.assertNotIn("passthrough", gesture.values())
 
+    def test_pass_through_is_not_offered_for_the_gesture_button_at_all(self):
+        # It could never work there, and offering it once cost a user a dead button.
+        for slot in cfg.SLOTS:
+            choices = self.window.rows[("gesture", slot.id)].choices
+            self.assertNotIn("passthrough", choices.values(),
+                             f"passthrough offered for gesture {slot.id}")
+
+    def test_the_gesture_button_still_offers_ordinary_actions(self):
+        choices = self.window.rows[("gesture", "tap")].choices
+        self.assertIn("middle_click", choices.values())
+        self.assertIn("task_view", choices.values())
+        self.assertIn("none", choices.values())
+
     def test_picking_each_button_works(self):
         for index in range(len(cfg.BUTTONS)):
             self.window.button_list.selection_clear(0, "end")
