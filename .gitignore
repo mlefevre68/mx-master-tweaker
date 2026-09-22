@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Editors
+.vscode/
+.idea/
+
+# Local settings written by the app live in %APPDATA%, not here, but keep any stray
+# copies out of the repository anyway.
+settings.json
+*.broken.json
+*.log
