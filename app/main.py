@@ -18,6 +18,7 @@ import logging
 import logging.handlers
 import queue
 import sys
+import time
 import tkinter as tk
 from tkinter import messagebox
 
@@ -55,6 +56,7 @@ class App:
         self.gesture_state = hidpp.Status("off", "Not started")
         self._requests: queue.Queue = queue.Queue()
         self._open_settings_at_start = open_settings
+        self._quitting = False
 
         self.root = tk.Tk()
         self.root.withdraw()
@@ -71,6 +73,7 @@ class App:
             "toggle_enabled": lambda: self._request("toggle"),
             "toggle_startup": lambda: self._request("startup"),
             "quit": lambda: self._request("quit"),
+            "host_stopped": lambda: self._request("quit"),
             "startup_enabled": lambda: self._starts_at_logon,
             "on_raw": self._on_raw,
         })
@@ -165,6 +168,12 @@ class App:
                  "on" if self.config.enabled else "off")
 
     def quit(self) -> None:
+        # Reachable twice over: once from the tray menu, and again when the host thread
+        # notices it has stopped. Doing the work twice would block on threads that are
+        # already gone.
+        if self._quitting:
+            return
+        self._quitting = True
         log.info("Shutting down")
         if self.gesture is not None:
             # Give it a moment to hand the gesture button back to the mouse before the
@@ -195,16 +204,22 @@ class App:
         return 0
 
 
-def wake_existing_instance() -> bool:
-    """Bring the copy that is already running to the front instead of starting a second.
+def wake_existing_instance(timeout: float = 0.0) -> bool:
+    """Bring the copy that is already running to the front.
 
-    Two copies would both hook the mouse and every binding would fire twice.
+    Two copies would both hook the mouse and every binding would fire twice, so a second
+    start hands over to the first instead. A copy that is still starting up has not
+    created its window yet, which is why this is willing to wait for one.
     """
-    hwnd = w.user32.FindWindowW(WINDOW_CLASS, None)
-    if not hwnd:
-        return False
-    w.user32.PostMessageW(hwnd, w.WM_APP_SHOW, 0, 0)
-    return True
+    deadline = time.monotonic() + timeout
+    while True:
+        hwnd = w.user32.FindWindowW(WINDOW_CLASS, None)
+        if hwnd:
+            w.user32.PostMessageW(hwnd, w.WM_APP_SHOW, 0, 0)
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -222,15 +237,16 @@ def main(argv: list[str] | None = None) -> int:
     # thing that happens is not a silent change to how the mouse behaves.
     first_run = not cfg.config_path().exists()
 
-    first = w.claim_single_instance(MUTEX_NAME)
-    if not first:
-        if wake_existing_instance():
+    if not w.claim_single_instance(MUTEX_NAME):
+        # Wait a little: the copy holding the mutex may still be starting up, and its
+        # window is the last thing it creates.
+        if wake_existing_instance(timeout=5.0):
             log.info("Already running; brought the existing window forward")
             return 0
-        # The mutex is held but no window answered: the other copy is still starting,
-        # or is wedged. Starting a second hook on top would double every binding.
-        log.warning("Another copy is already running")
-        return 0
+        # The mutex is held but nothing answers. That copy has no window, so it has no
+        # tray icon and no hook either - it cannot be doing anything useful, and
+        # refusing to start would leave the app permanently unstartable. Carry on.
+        log.warning("A copy is running but not responding; starting anyway")
 
     try:
         return App(open_settings=arguments.settings or first_run).run()

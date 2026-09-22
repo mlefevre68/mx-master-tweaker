@@ -278,6 +278,26 @@ class ComboTests(unittest.TestCase):
             self.assertTrue(action.label)
             self.assertTrue(action.group)
 
+    def test_every_action_can_actually_be_carried_out(self):
+        # An action in the list that nothing knows how to perform would be offered in
+        # the settings window and then silently do nothing.
+        from app import actions
+        runnable = set(actions._COMBOS) | actions.ENGINE_HANDLED | {
+            "zoom_in", "zoom_out", "zoom_reset", "scroll_up", "scroll_down",
+            "scroll_left", "scroll_right", "middle_click", "keys", "launch",
+        }
+        for action in actions.CATALOGUE:
+            self.assertIn(action.id, runnable, f"{action.id} is offered but not handled")
+
+    def test_showing_the_desktop_has_a_way_back(self):
+        from app import actions
+        # Win+D toggles, and Win+Shift+M restores what was minimised. Both are needed:
+        # the toggle for the same button, the restore for a different one.
+        self.assertEqual(actions._COMBOS["show_desktop"], (w.VK_LWIN, ord("D")))
+        self.assertEqual(actions._COMBOS["restore_windows"],
+                         (w.VK_LWIN, w.VK_SHIFT, ord("M")))
+        self.assertEqual(actions._COMBOS["minimise_all"], (w.VK_LWIN, ord("M")))
+
 
 if __name__ == "__main__":
     unittest.main()

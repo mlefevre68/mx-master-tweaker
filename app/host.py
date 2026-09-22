@@ -60,6 +60,11 @@ class Host(threading.Thread):
         self.ready.set()
         self._pump()
         self._teardown()
+        # The window, the tray icon and the hook have all gone. Nothing this process can
+        # still do is useful, and staying alive would leave an invisible copy holding the
+        # single-instance mutex, so that starting the app again would appear to do
+        # nothing at all. Tell the app to shut down properly instead.
+        self._call("host_stopped")
 
     def _create_window(self) -> None:
         self._wnd_proc = w.WNDPROC(self._on_message)

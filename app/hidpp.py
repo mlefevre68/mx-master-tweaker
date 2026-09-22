@@ -506,7 +506,9 @@ class GestureButton(threading.Thread):
         super().__init__(name="gesture-button", daemon=True)
         self._on_button = on_button
         self._on_status = on_status
-        self._stop = threading.Event()
+        # Not "_stop": threading.Thread already has a private method by that name, and
+        # shadowing it makes join() raise instead of waiting, so shutdown never finishes.
+        self._stopping = threading.Event()
         self._channel: Channel | None = None
         self._pressed = False
         self._reprog_index = 0
@@ -515,7 +517,7 @@ class GestureButton(threading.Thread):
     # -- lifecycle ---------------------------------------------------------
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stopping.set()
 
     def _set_status(self, state: str, detail: str) -> None:
         if (state, detail) == (self.status.state, self.status.detail):
@@ -530,7 +532,7 @@ class GestureButton(threading.Thread):
 
     def run(self) -> None:
         delay = RECONNECT_SECONDS
-        while not self._stop.is_set():
+        while not self._stopping.is_set():
             connected = False
             try:
                 connected = self._session()
@@ -543,8 +545,8 @@ class GestureButton(threading.Thread):
             # for as long as it is switched on.
             delay = (RECONNECT_SECONDS if connected
                      else min(delay * 1.6, MAX_RECONNECT_SECONDS))
-            if not self._stop.is_set():
-                self._stop.wait(delay)
+            if not self._stopping.is_set():
+                self._stopping.wait(delay)
         self._set_status("off", "Stopped")
 
     def _close(self) -> None:
@@ -569,7 +571,7 @@ class GestureButton(threading.Thread):
             return False
 
         for candidate in candidates:
-            if self._stop.is_set():
+            if self._stopping.is_set():
                 return True
             try:
                 if self._talk_to(candidate):
@@ -624,7 +626,7 @@ class GestureButton(threading.Thread):
         self._reprog_index = reprog_index
         last_divert = time.monotonic()
 
-        while not self._stop.is_set():
+        while not self._stopping.is_set():
             frame = channel.read(500)  # short, so that stopping stays quick
             if frame:
                 self._handle(frame)

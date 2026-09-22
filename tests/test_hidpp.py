@@ -101,5 +101,29 @@ class DiscoveryTests(unittest.TestCase):
             self.assertTrue(candidate.path.startswith("\\\\?\\"))
 
 
+class ShutdownTests(unittest.TestCase):
+    """The listener is a Thread, so it must not tread on Thread's own attributes."""
+
+    def setUp(self) -> None:
+        # Never started, so it neither opens a device nor touches the real mouse.
+        self.button = hidpp.GestureButton(lambda pressed, position: None)
+
+    def test_the_stop_flag_does_not_shadow_thread_internals(self):
+        # threading.Thread calls its own private _stop() from join(). An attribute of
+        # that name replaces the method, and join() then raises TypeError instead of
+        # waiting - so the app could never finish shutting down and stayed alive with
+        # no window, holding the single-instance mutex.
+        self.assertTrue(callable(getattr(self.button, "_stop", None)),
+                        "GestureButton has shadowed Thread._stop")
+
+    def test_asking_it_to_stop_sets_the_flag(self):
+        self.assertFalse(self.button._stopping.is_set())
+        self.button.stop()
+        self.assertTrue(self.button._stopping.is_set())
+
+    def test_it_is_a_daemon_so_it_cannot_hold_the_process_open(self):
+        self.assertTrue(self.button.daemon)
+
+
 if __name__ == "__main__":
     unittest.main()
