@@ -28,6 +28,22 @@ function Write-Step($text) { Write-Host "`n=== $text ===" -ForegroundColor Cyan 
 function Write-Ok($text) { Write-Host "  $text" -ForegroundColor Green }
 function Write-Info($text) { Write-Host "  $text" -ForegroundColor Gray }
 
+# Tools report progress on stderr, and unittest is one of them. Under
+# $ErrorActionPreference = "Stop", PowerShell 5.1 turns anything on stderr into a
+# terminating error, which aborted setup half-way through. Run native commands with that
+# behaviour relaxed and judge them by their exit code, which is what actually says
+# whether they worked.
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory)][scriptblock]$Command
+    )
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $Command 2>&1 | Out-Null }
+    finally { $ErrorActionPreference = $previous }
+    return ($LASTEXITCODE -eq 0)
+}
+
 Write-Host "MX Master Tweaker - setup" -ForegroundColor White
 
 # --- 1. Windows ------------------------------------------------------------
@@ -54,8 +70,7 @@ if ([version]$version -lt [version]"3.10") {
 }
 Write-Ok "Python $version at $($python.Source)"
 
-& $python.Source -c "import tkinter" 2>$null
-if ($LASTEXITCODE -ne 0) {
+if (-not (Invoke-Native { & $python.Source -c "import tkinter" })) {
     throw @"
 This Python has no tkinter, so the settings window cannot open.
 Re-run the Python installer and make sure "tcl/tk and IDLE" is selected.
@@ -67,13 +82,12 @@ Write-Info "No packages to install - the app uses only the standard library."
 
 # --- 3. A quick self-test --------------------------------------------------
 Write-Step "Checking the app"
-& $python.Source -m unittest discover -s tests -q 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Warning "The self-test did not pass. The app may still work; see the output of:"
-    Write-Warning "    python -m unittest discover -s tests"
+if (Invoke-Native { & $python.Source -m unittest discover -s tests -q }) {
+    Write-Ok "Self-test passed"
 }
 else {
-    Write-Ok "Self-test passed"
+    Write-Warning "The self-test did not pass. The app may still work; for details run:"
+    Write-Warning "    python -m unittest discover -s tests"
 }
 
 # --- 4. Desktop shortcut ---------------------------------------------------
@@ -98,6 +112,7 @@ if ($AutoStart) {
     Write-Step "Setting the app to start when you sign in"
     & (Join-Path $PSScriptRoot "install-startup.ps1")
 }
+$alreadyAtLogon = [bool](Get-ScheduledTask -TaskName "MX Master Tweaker" -ErrorAction SilentlyContinue)
 
 # --- 6. Done ---------------------------------------------------------------
 Write-Step "Setup complete"
@@ -108,7 +123,11 @@ Write-Host @"
   Everything happens on this machine. No account, no service, no network access.
 "@ -ForegroundColor Green
 
-if (-not $AutoStart) {
+if ($alreadyAtLogon) {
+    Write-Info "It is already set to start when you sign in."
+    Write-Info "Undo that with:  .\install-startup.ps1 -Remove"
+}
+else {
     Write-Info "To start it automatically at sign-in:  .\install-startup.ps1"
     Write-Info "or tick 'Start when I sign in to Windows' in the settings window."
 }

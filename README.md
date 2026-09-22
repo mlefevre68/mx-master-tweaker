@@ -35,14 +35,21 @@ That checks Python, runs the self-test, puts a shortcut on your desktop and regi
 app to start when you sign in. Leave off `-AutoStart` if you would rather decide later -
 there is a tick box for it in the settings window.
 
-Then:
+Then start it:
 
 ```powershell
 .\run.ps1 -Settings
 ```
 
-A mouse icon appears in the notification area. Click it to open the settings, right-click
-it for a short menu.
+A **mouse icon appears in the notification area** (bottom-right of the taskbar). Click it
+to open the settings, right-click it for a short menu.
+
+On Windows 11 new tray icons are usually hidden: click the **^** arrow next to the clock
+to see them, and drag the mouse icon onto the taskbar to keep it visible.
+
+The app has no window of its own when it is running - it is only the tray icon and the
+settings window. Running `.\run.ps1` again, or double-clicking the desktop shortcut,
+brings the settings window back rather than starting a second copy.
 
 ## What you get out of the box
 
@@ -156,6 +163,10 @@ their own that interfere. Quit from the tray menu and start the app again.
 **A keystroke action goes to the wrong window.** Actions are sent to whatever has focus at
 the moment the button is released, which for a gesture is where the mouse ended up, not
 where it started.
+
+**The settings window will not come up.** Run `.\run.ps1 -Console -Verbose` to start it in
+the window you are in, with the log on screen; any error will be visible there rather
+than swallowed. `pythonw.exe` has no console, so a failure to start is otherwise silent.
 
 **The log** is at `%LOCALAPPDATA%\mx-master-tweaker\logs\app.log`. Run
 `.\run.ps1 -Console -Verbose` to watch it live, which also records every binding as it

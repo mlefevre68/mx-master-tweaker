@@ -28,15 +28,25 @@ if (-not $command) {
     throw "$python is not on PATH. Run .\setup.ps1 first, or install Python from python.org."
 }
 
-$arguments = @((Join-Path $PSScriptRoot "startup.pyw"))
-if ($Settings) { $arguments += "--settings" }
-if ($VerbosePreference -eq "Continue") { $arguments += "--verbose" }
+$script = Join-Path $PSScriptRoot "startup.pyw"
+if (-not (Test-Path $script)) { throw "startup.pyw was not found next to this script" }
+
+$extra = @()
+if ($Settings) { $extra += "--settings" }
+if ($VerbosePreference -eq "Continue") { $extra += "--verbose" }
 
 if ($Console) {
-    & $command.Source @arguments
+    # Calling a native command directly quotes each argument properly.
+    & $command.Source $script @extra
 }
 else {
-    Start-Process -FilePath $command.Source -ArgumentList $arguments `
+    # Start-Process joins -ArgumentList with spaces and does not quote the pieces, so an
+    # array would split this path at "OneDrive - EDF" and Python would look for a script
+    # called "C:\Users\...\OneDrive". Under pythonw.exe there is no console for that
+    # error to appear in, so the app simply never started and said nothing. Pass one
+    # already-quoted command line instead.
+    $commandLine = (@("`"$script`"") + $extra) -join " "
+    Start-Process -FilePath $command.Source -ArgumentList $commandLine `
         -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
     Write-Host "MX Master Tweaker is running - look for the mouse icon in the notification area." -ForegroundColor Green
 }
