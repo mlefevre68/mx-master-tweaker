@@ -41,10 +41,11 @@ if ($Console) {
 }
 else {
     # Start-Process joins -ArgumentList with spaces and does not quote the pieces, so an
-    # array would split this path at "OneDrive - EDF" and Python would look for a script
-    # called "C:\Users\...\OneDrive". Under pythonw.exe there is no console for that
-    # error to appear in, so the app simply never started and said nothing. Pass one
-    # already-quoted command line instead.
+    # array would split this path at any space in it - "OneDrive - Contoso", "My
+    # Documents" - and Python would go looking for a script whose name stops at the
+    # first space. Under pythonw.exe there is no console for that error to appear in, so
+    # the app simply never started and said nothing. Pass one already-quoted command
+    # line instead.
     $commandLine = (@("`"$script`"") + $extra) -join " "
     Start-Process -FilePath $command.Source -ArgumentList $commandLine `
         -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
