@@ -47,6 +47,9 @@ _COMBOS: dict[str, tuple[int, ...]] = {
     "desktop_next": (w.VK_LWIN, w.VK_CONTROL, w.VK_RIGHT),
     "desktop_prev": (w.VK_LWIN, w.VK_CONTROL, w.VK_LEFT),
     "task_view": (w.VK_LWIN, w.VK_TAB),
+    # Task view is what a three-finger swipe up does on a precision touchpad: every
+    # window laid out at once, click the one you want. Alt+Tab is the other thing -
+    # a quick flick between two windows - and is "switch_app" below.
     "show_desktop": (w.VK_LWIN, ord("D")),
     "minimise_all": (w.VK_LWIN, ord("M")),
     "restore_windows": (w.VK_LWIN, w.VK_SHIFT, ord("M")),
@@ -111,7 +114,7 @@ CATALOGUE: tuple[Action, ...] = (
 
     Action("desktop_next", "Next virtual desktop", "Windows", repeats=True),
     Action("desktop_prev", "Previous virtual desktop", "Windows", repeats=True),
-    Action("task_view", "Task view", "Windows"),
+    Action("task_view", "Show all windows to pick one (Task view)", "Windows"),
     Action("switch_app", "Switch application (Alt+Tab)", "Windows", repeats=True),
     Action("show_desktop", "Show the desktop (press again to come back)", "Windows"),
     Action("minimise_all", "Minimise every window", "Windows"),

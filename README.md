@@ -216,6 +216,16 @@ Run the tests with:
 python -m unittest discover -s tests
 ```
 
+Those are quick and touch nothing outside the process. There is a second, deliberately
+separate set that drives the real desktop - it opens Task View, clears the desktop and
+puts it back - to prove the actions do not just spell the right keys but actually have
+the intended effect. It is not part of the normal run because it takes over the screen
+for a few seconds:
+
+```powershell
+python -m unittest tests.live_desktop_test
+```
+
 ## Scope
 
 Written for a Logitech MX Master 3. The wheel click, the two side buttons and the thumb
