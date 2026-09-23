@@ -121,8 +121,15 @@ def defaults() -> dict:
         "enabled": True,
         "settings": {
             # How far the mouse has to travel, in pixels, before a held button counts as
-            # a direction rather than a press.
+            # a direction rather than a press. Shared by every button unless one of them
+            # has its own entry in button_move_threshold below.
             "move_threshold": 30,
+            # A per-button override of the setting above, for a button that needs to be
+            # a bit less trigger-happy than the rest. Back and Forward are used while
+            # hovering over a browser, where the mouse is often not perfectly still, so
+            # they get a little more room than the shared default before a small nudge
+            # counts as a direction.
+            "button_move_threshold": {"x1": 45, "x2": 45},
             # A hold longer than this is never treated as a press, even without movement.
             "tap_milliseconds": 700,
             # Some wheels report several small steps per physical notch. Raising this
@@ -181,6 +188,16 @@ class Config:
         value = self.settings.get(name, fallback)
         return fallback if value is None else value
 
+    def threshold_for(self, source: str) -> int:
+        """How far the mouse must move for a Hold + move direction on this button to
+        count as one. Falls back to the shared "Movement needed for a direction"
+        setting for any button without an override of its own."""
+        overrides = self.settings.get("button_move_threshold") or {}
+        value = overrides.get(source)
+        if value is None:
+            value = self.setting("move_threshold", 30)
+        return max(5, int(value))
+
     def to_dict(self) -> dict:
         return {
             "version": CONFIG_VERSION,
@@ -219,9 +236,28 @@ def _clean(raw: dict) -> dict:
             bindings[source] = kept
 
     base = defaults()["settings"]
-    settings = {**base, **{k: v for k, v in (raw.get("settings") or {}).items() if k in base}}
+    raw_settings = raw.get("settings") or {}
+    settings = {**base, **{k: v for k, v in raw_settings.items() if k in base}}
+    settings["button_move_threshold"] = _clean_button_thresholds(
+        raw_settings.get("button_move_threshold"))
     return {"enabled": bool(raw.get("enabled", True)),
             "settings": settings, "bindings": bindings}
+
+
+def _clean_button_thresholds(raw) -> dict[str, int]:
+    """Validate a per-button movement override, keeping the shipped defaults for any
+    button a hand-edited or older settings file does not mention."""
+    result = dict(defaults()["settings"]["button_move_threshold"])
+    if isinstance(raw, dict):
+        known = {button.id for button in BUTTONS}
+        for source, value in raw.items():
+            if source not in known:
+                continue
+            try:
+                result[source] = max(5, int(value))
+            except (TypeError, ValueError):
+                continue
+    return result
 
 
 def default_config() -> Config:

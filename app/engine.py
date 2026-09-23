@@ -150,10 +150,6 @@ class Engine:
     # -- settings ----------------------------------------------------------
 
     @property
-    def _threshold(self) -> int:
-        return max(5, int(self.config.setting("move_threshold", 30)))
-
-    @property
     def _tap_limit(self) -> float:
         return max(0.1, float(self.config.setting("tap_milliseconds", 700)) / 1000.0)
 
@@ -246,12 +242,12 @@ class Engine:
             self._carry(info.pt.x, info.pt.y)
         if not self._held:
             return
-        threshold = self._threshold
         # A copy, because the gesture button arrives on its own thread and can add or
         # remove an entry while the hook is part-way through this loop.
         for held in list(self._held.values()):
             if held.far:
                 continue
+            threshold = self.config.threshold_for(held.source)
             dx = info.pt.x - held.origin[0]
             dy = info.pt.y - held.origin[1]
             if abs(dx) >= threshold or abs(dy) >= threshold:
@@ -263,7 +259,7 @@ class Engine:
             return None
         dx = position[0] - held.origin[0]
         dy = position[1] - held.origin[1]
-        if max(abs(dx), abs(dy)) < self._threshold:
+        if max(abs(dx), abs(dy)) < self.config.threshold_for(held.source):
             return None
         # Screen coordinates grow downwards, so a negative dy is "up" on the desk.
         if abs(dx) >= abs(dy):
@@ -297,13 +293,18 @@ class Engine:
         dropped rather than retried.
         """
         snapping = self.config.setting("snap_on_drag", True)
+        # How far a click is allowed to wobble before it counts as a drag: the same
+        # distance Windows itself uses everywhere else to tell the two apart, rather
+        # than a value invented for this app. A fixed handful of pixels was too easily
+        # crossed by an ordinary hand while clicking, which was the reported bug.
+        arm_distance = w.drag_arm_distance()
         for source, drag in list(self._drags.items()):
             if not w.user32.IsWindow(drag.hwnd):
                 del self._drags[source]
                 continue
             dx = x - drag.origin[0]
             dy = y - drag.origin[1]
-            if not drag.moved and max(abs(dx), abs(dy)) < 2:
+            if not drag.moved and max(abs(dx), abs(dy)) < arm_distance:
                 continue  # ignore the shake of pressing the button
 
             if not drag.moved:

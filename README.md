@@ -90,6 +90,18 @@ trigger unset if you want the gesture button to ignore it.
 If you start a gesture and change your mind, hold the button still for longer than the
 press time (700 ms by default) and let go. Nothing happens.
 
+### How sensitive a button is
+
+How far the mouse has to move before a hold turns into a direction, or a grab turns
+into a real drag, is **Movement needed for a direction** on the **Thumb wheel** tab -
+raise it if things fire too easily, lower it if they feel sluggish to trigger.
+
+The Back and Forward buttons have their own copy of this, set a bit higher than the
+shared default out of the box: they are normally used while hovering over a browser,
+where the mouse is rarely perfectly still, so they need a little more room before an
+ordinary click is mistaken for something else. Change theirs on their own page without
+touching how any other button feels.
+
 ### Actions available
 
 Volume and media keys, Teams call controls, virtual desktops and window management,

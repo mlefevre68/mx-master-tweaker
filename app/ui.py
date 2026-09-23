@@ -247,6 +247,7 @@ class SettingsWindow:
         self.rows: dict[tuple[str, str], SlotRow] = {}
         self.panels: dict[str, ttk.Frame] = {}
         self.conflict_notes: dict[str, ttk.Label] = {}
+        self.button_sensitivity: dict[str, tk.IntVar] = {}
         self.events: queue.Queue = queue.Queue(maxsize=400)
         self._observing = False
         self._build()
@@ -344,9 +345,35 @@ class SettingsWindow:
             self.panels[button.id] = self._build_panel(
                 self.detail, button.id, button.label, button.hint, cfg.SLOTS)
         self._build_gesture_extras(self.panels["gesture"], len(cfg.SLOTS) + 2)
+        for source in ("x1", "x2"):
+            self._build_sensitivity_extra(self.panels[source], source, len(cfg.SLOTS) + 3)
         self._refresh_button_list()
         self.button_list.selection_set(0)
         self._on_button_selected()
+
+    def _build_sensitivity_extra(self, panel: ttk.Frame, source: str, row: int) -> None:
+        """A per-button movement threshold, for a button that needs a bit more room
+        than the shared default before a small nudge counts as intentional.
+
+        Back and Forward are the case that matters: used while hovering over a
+        browser, where the mouse is rarely perfectly still, so a shaky hand could too
+        easily trigger a Hold + move direction or start a Hold + drag by accident.
+        """
+        ttk.Separator(panel, orient="horizontal").grid(
+            row=row, column=0, columnspan=5, sticky="ew", pady=(16, 10))
+
+        variable = tk.IntVar(value=30)
+        self.button_sensitivity[source] = variable
+        ttk.Label(panel, text="Movement needed before this button reacts",
+                 width=32).grid(row=row + 1, column=0, sticky="w")
+        spin = ttk.Spinbox(panel, from_=10, to=150, textvariable=variable, width=8,
+                           command=self.touch)
+        spin.grid(row=row + 1, column=1, sticky="w")
+        spin.bind("<KeyRelease>", lambda *_: self.touch())
+        ttk.Label(panel, foreground="#666", text=(
+            "pixels - higher makes only this button less sensitive to a small nudge, "
+            "without changing anything else")
+        ).grid(row=row + 1, column=2, columnspan=3, sticky="w", padx=(12, 0))
 
     def _build_gesture_extras(self, panel: ttk.Frame, row: int) -> None:
         """The gesture button needs a switch and an honest status of its own.
@@ -518,6 +545,8 @@ class SettingsWindow:
         self.move_threshold.set(int(config.setting("move_threshold", 30)))
         self.tap_milliseconds.set(int(config.setting("tap_milliseconds", 700)))
         self.wheel_notch.set(int(config.setting("wheel_notch", 120)))
+        for source, variable in self.button_sensitivity.items():
+            variable.set(config.threshold_for(source))
         for (source, slot), row in self.rows.items():
             row.load(config.binding(source, slot))
         self.at_startup.set(self.app.starts_at_logon())
@@ -544,6 +573,12 @@ class SettingsWindow:
 
         self.app.config.bindings = bindings
         self.app.config.enabled = bool(self.enabled.get())
+        # Merge rather than replace: only Back and Forward have a control in this
+        # window, and replacing the whole dict would silently drop an override some
+        # other button might have picked up from a hand-edited settings file.
+        thresholds = dict(self.app.config.settings.get("button_move_threshold") or {})
+        thresholds.update({source: int(variable.get())
+                          for source, variable in self.button_sensitivity.items()})
         self.app.config.settings.update({
             "invert_thumbwheel": bool(self.invert.get()),
             "use_gesture_button": bool(self.use_gesture.get()),
@@ -551,6 +586,7 @@ class SettingsWindow:
             "move_threshold": int(self.move_threshold.get()),
             "tap_milliseconds": int(self.tap_milliseconds.get()),
             "wheel_notch": int(self.wheel_notch.get()),
+            "button_move_threshold": thresholds,
         })
         self.app.save()
         self._refresh_button_list()

@@ -111,6 +111,21 @@ class DeviceListTests(unittest.TestCase):
         self.assertTrue(any(d["type"] == "mouse" for d in w.input_devices()))
 
 
+class DragArmDistanceTests(unittest.TestCase):
+    def test_it_is_a_small_positive_number_of_pixels(self):
+        # Whatever this machine's Ease of Access setting actually is, it should be a
+        # sane, small click-vs-drag distance - not zero, and not some huge value that
+        # would make every grab feel unresponsive.
+        distance = w.drag_arm_distance()
+        self.assertGreaterEqual(distance, 1)
+        self.assertLess(distance, 50)
+
+    def test_it_matches_what_windows_itself_reports(self):
+        expected = max(1, w.user32.GetSystemMetrics(w.SM_CXDRAG),
+                       w.user32.GetSystemMetrics(w.SM_CYDRAG))
+        self.assertEqual(w.drag_arm_distance(), expected)
+
+
 class TopmostRepairTests(unittest.TestCase):
     """Undoing the Windows bug where a snapped window sticks always-on-top.
 
@@ -153,10 +168,18 @@ class TopmostRepairTests(unittest.TestCase):
             w.user32.DestroyWindow(self.hwnd)
 
     def _set_topmost(self) -> None:
+        import time
         w.user32.SetWindowPos(self.hwnd, w.HWND_TOPMOST, 0, 0, 0, 0,
                               w.SWP_NOMOVE | w.SWP_NOSIZE | w.SWP_NOACTIVATE)
-        # SWP_ASYNCWINDOWPOS is not used here, so this one takes effect immediately -
-        # the point is to set up the "already topmost" state to repair afterwards.
+        # SWP_ASYNCWINDOWPOS is not used here, so this is not expected to need a wait -
+        # but a window fresh off CreateWindowExW, with no message loop pumping for it
+        # in this test process, has occasionally been slower to reflect a Z-order
+        # change than a hand-run script trying the same thing with print() statements
+        # in between naturally spacing things out. A short poll is cheap and removes
+        # the flake either way.
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and not w.is_topmost(self.hwnd):
+            time.sleep(0.02)
 
     def _settle(self) -> None:
         import time

@@ -139,6 +139,39 @@ class EngineTests(unittest.TestCase):
         engine.on_button("gesture", False, (600, 500))
         self.assertEqual(engine.dispatcher.fired, [])
 
+    # -- per-button sensitivity ----------------------------------------------
+
+    def test_a_button_with_its_own_threshold_needs_more_movement(self):
+        # x1 and x2 ship with a higher threshold than the shared default, so a
+        # movement that would fire a direction on any other button must not fire one
+        # on Back or Forward.
+        engine = self.build(
+            {"x1": {"right": {"action": "desktop_next"}}},
+            button_move_threshold={"x1": 45})
+        engine.on_button("x1", True, (500, 500))
+        engine._track_move(event(535, 500))  # 35px: past the shared default, not x1's
+        engine.on_button("x1", False, (535, 500))
+        self.assertEqual(engine.dispatcher.fired, [],
+                         "35 pixels should not be enough for a button needing 45")
+
+    def test_enough_movement_still_fires_on_a_higher_threshold_button(self):
+        engine = self.build(
+            {"x1": {"right": {"action": "desktop_next"}}},
+            button_move_threshold={"x1": 45})
+        engine.on_button("x1", True, (500, 500))
+        engine._track_move(event(550, 500))  # past x1's own, higher threshold
+        engine.on_button("x1", False, (550, 500))
+        self.assertEqual(engine.dispatcher.fired, [("desktop_next", "")])
+
+    def test_a_button_with_no_override_uses_the_shared_default(self):
+        engine = self.build(
+            {"gesture": {"right": {"action": "desktop_next"}}},
+            button_move_threshold={"x1": 45})  # someone else's override, not gesture's
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(535, 500))  # past the shared default of 30
+        engine.on_button("gesture", False, (535, 500))
+        self.assertEqual(engine.dispatcher.fired, [("desktop_next", "")])
+
     # -- hold and scroll ---------------------------------------------------
 
     def test_holding_and_scrolling_fires_once_per_notch(self):
@@ -251,13 +284,16 @@ class DragTests(unittest.TestCase):
         self._saved = {name: getattr(w, name) for name in
                        ("draggable_window_at", "window_rect", "move_window",
                         "resize_window", "unmaximise", "window_class",
-                        "snap_zone_at", "apply_snap")}
+                        "snap_zone_at", "apply_snap", "drag_arm_distance")}
         w.draggable_window_at = lambda x, y: self.window_at
         w.window_rect = lambda hwnd: self.rect
         w.move_window = lambda hwnd, x, y: self.moves.append((hwnd, x, y))
         w.resize_window = lambda hwnd, cx, cy: self.resizes.append((hwnd, cx, cy))
         w.unmaximise = lambda hwnd: self.restored.append(hwnd)
         w.window_class = lambda hwnd: "TestWindow"
+        # Fixed rather than read from this machine's real Ease of Access setting, so the
+        # tests do not depend on whatever that happens to be wherever they run.
+        w.drag_arm_distance = lambda: 4
         # No zone unless a test says otherwise: real screen coordinates would
         # occasionally, accidentally be near a real edge on whatever machine runs this.
         self.zone = None
@@ -388,6 +424,18 @@ class DragTests(unittest.TestCase):
         engine.on_button("gesture", True, (500, 500))
         engine._track_move(event(501, 500))
         self.assertEqual(self.moves, [], "pressing the button should not nudge it")
+
+    def test_the_drag_arm_distance_comes_from_windows_itself(self):
+        # Not an arbitrary number invented for this app: the same distance Windows
+        # uses everywhere to tell a click from the start of a drag, so a grab is
+        # exactly as forgiving of a shaky hand as clicking anything else already is.
+        engine = self.grab()
+        w.drag_arm_distance = lambda: 20
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(515, 500))  # under 20: still just a click
+        self.assertEqual(self.moves, [])
+        engine._track_move(event(525, 500))  # past 20: now it is a drag
+        self.assertEqual(len(self.moves), 1)
 
     def test_nothing_happens_when_there_is_no_window_under_the_cursor(self):
         self.window_at = None
@@ -527,6 +575,42 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(passes_through("x2"))
         self.assertTrue(passes_through("middle"))
         self.assertFalse(passes_through("thumbwheel"))
+
+    def test_back_and_forward_need_more_movement_out_of_the_box(self):
+        # Reported directly: Back and Forward felt too sensitive, since they are used
+        # while hovering over a browser where the mouse is rarely perfectly still.
+        from app.config import default_config
+        config = default_config()
+        self.assertGreater(config.threshold_for("x1"), config.setting("move_threshold", 0))
+        self.assertGreater(config.threshold_for("x2"), config.setting("move_threshold", 0))
+
+    def test_a_button_with_no_override_falls_back_to_the_shared_setting(self):
+        from app.config import Config
+        config = Config(settings={"move_threshold": 30,
+                                  "button_move_threshold": {"x1": 50}})
+        self.assertEqual(config.threshold_for("x1"), 50)
+        self.assertEqual(config.threshold_for("gesture"), 30)
+        self.assertEqual(config.threshold_for("middle"), 30)
+
+    def test_an_override_is_never_read_as_smaller_than_five(self):
+        from app.config import Config
+        config = Config(settings={"button_move_threshold": {"x1": 0}})
+        self.assertEqual(config.threshold_for("x1"), 5)
+
+    def test_a_hand_edited_override_for_an_unknown_button_is_dropped(self):
+        from app.config import _clean
+        cleaned = _clean({"settings": {"button_move_threshold":
+                                       {"x1": 50, "not_a_real_button": 999}}})
+        self.assertEqual(cleaned["settings"]["button_move_threshold"].get("x1"), 50)
+        self.assertNotIn("not_a_real_button", cleaned["settings"]["button_move_threshold"])
+
+    def test_a_hand_edited_override_missing_one_button_keeps_the_others_default(self):
+        # A file that only mentions x1 must not lose x2's shipped default outright.
+        from app.config import _clean, defaults
+        cleaned = _clean({"settings": {"button_move_threshold": {"x1": 60}}})
+        self.assertEqual(cleaned["settings"]["button_move_threshold"]["x1"], 60)
+        self.assertEqual(cleaned["settings"]["button_move_threshold"]["x2"],
+                         defaults()["settings"]["button_move_threshold"]["x2"])
 
 
 class ComboTests(unittest.TestCase):

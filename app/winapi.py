@@ -600,6 +600,19 @@ user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.ShowWindow.restype = wintypes.BOOL
 user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 user32.GetClassNameW.restype = ctypes.c_int
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.GetSystemMetrics.restype = ctypes.c_int
+
+# What Windows itself uses to tell a click from the start of a drag, in pixels. Usually
+# 4, but it is whatever the user has set under Ease of Access, so asking rather than
+# assuming keeps a grabbed window exactly as responsive to start dragging as everything
+# else on the desktop already is.
+SM_CXDRAG = 68
+SM_CYDRAG = 69
+
+
+def drag_arm_distance() -> int:
+    return max(1, user32.GetSystemMetrics(SM_CXDRAG), user32.GetSystemMetrics(SM_CYDRAG))
 
 
 def window_class(hwnd) -> str:
