@@ -99,6 +99,23 @@ browser navigation and tabs, copy/paste/undo, zoom, scrolling - plus two open-en
   how you reach anything the list does not already cover.
 - **Open a program or file...** - anything you can double-click.
 
+### Grabbing a window
+
+**Hold + drag** is a different kind of trigger from the others: instead of judging one
+movement when you let go, it grabs whatever window is under the cursor the moment the
+button goes down and carries it with the mouse for as long as the button is held - no
+need to find the title bar, which matters most on an ultrawide or with a window that has
+been dragged off-screen. Two actions are offered for it:
+
+- **Grab the window and move it** - a maximised window is restored first, the same as
+  dragging a maximised title bar does.
+- **Grab the window and resize it** - the corner nearest the cursor follows the mouse.
+
+Binding **Hold + drag** uses up the mouse movement as it happens, so the direction
+bindings on the same button (`Hold + move up/down/left/right`) have nothing left to
+judge when you let go, and will not fire. The settings window says so if you bind both.
+Press and Hold + scroll are unaffected and still work.
+
 ## The gesture button
 
 The gesture button is the wide flat one your thumb rests on, and it takes more than a

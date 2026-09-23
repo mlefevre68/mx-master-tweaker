@@ -25,7 +25,14 @@ How the buttons work
 Press means a quick press and release. Hold + move means holding the button down, \
 moving the whole mouse in a direction, and letting go - the action happens when you \
 let go. Hold + scroll means holding the button down and rolling the main wheel, and \
-it repeats for as long as you keep scrolling, which is what makes it good for volume.
+it repeats for as long as you keep scrolling, which is what makes it good for volume. \
+Hold + drag is different again: instead of judging one movement, it grabs whatever \
+window is under the cursor and carries it with the mouse for as long as the button \
+stays down - useful for moving or resizing a window without hunting for its title bar.
+
+A button bound to Hold + drag has no directions left: by the time you let go, the \
+movement has already been used to carry the window, so there is nothing left to judge \
+a direction from. Press and Hold + scroll still work normally on the same button.
 
 A button with nothing bound to it is never touched, and keeps doing whatever Windows \
 already made it do. As soon as you bind anything to a button, the whole button belongs \
@@ -210,6 +217,7 @@ class SlotRow:
     def _on_action_change(self, _event=None) -> None:
         self._sync_value_widgets()
         self.window.touch()
+        self.window.warn_about_conflicts()
 
     def _on_extra(self) -> None:
         needs = self._needs()
@@ -233,6 +241,7 @@ class SettingsWindow:
         self.dirty = False
         self.rows: dict[tuple[str, str], SlotRow] = {}
         self.panels: dict[str, ttk.Frame] = {}
+        self.conflict_notes: dict[str, ttk.Label] = {}
         self.events: queue.Queue = queue.Queue(maxsize=400)
         self._observing = False
         self._build()
@@ -244,11 +253,19 @@ class SettingsWindow:
         """Display text to action id, in catalogue order, for one trigger.
 
         What is offered depends on the button as well as the trigger: passing a button
-        "through" is only meaningful where Windows has an event of its own to replay.
+        "through" is only meaningful where Windows has an event of its own to replay,
+        and a drag is a mode that only the drag trigger can run.
         """
         items = {LEAVE_ALONE: None}
         for action in actions.CATALOGUE:
-            if action.id == "passthrough":
+            if slot_id == "drag":
+                # Anything that happens once is meaningless here: this trigger fires
+                # continuously for as long as the button is held.
+                if not action.drag:
+                    continue
+            elif action.drag:
+                continue
+            elif action.id == "passthrough":
                 # Passing a gesture or a scroll through has no meaning - there is no
                 # original event to replay - and nor does it for a button Windows
                 # never receives in the first place.
@@ -366,7 +383,34 @@ class SettingsWindow:
             row=1, column=0, columnspan=5, sticky="w", pady=(0, 10))
         for index, slot in enumerate(slots):
             self.rows[(source, slot.id)] = SlotRow(panel, index + 2, source, slot, self)
+        if source in cfg.BUTTON_BY_ID:
+            note = ttk.Label(panel, foreground="#b60", wraplength=620, justify="left")
+            note.grid(row=len(slots) + 2, column=0, columnspan=5,
+                      sticky="w", pady=(8, 0))
+            self.conflict_notes[source] = note
         return panel
+
+    def warn_about_conflicts(self) -> None:
+        """Say so when a drag has taken over the movement the directions need.
+
+        A drag consumes the mouse as it moves, so by the time the button is released
+        there is no single direction left to judge. Binding both looks reasonable and
+        leaves the directions dead, which is exactly the kind of silent nothing this
+        app should not be handing out.
+        """
+        for source, note in self.conflict_notes.items():
+            row = self.rows.get((source, "drag"))
+            dragging = row is not None and row.dump() is not None
+            directions = [cfg.SLOT_BY_ID[slot].label for slot in cfg.DIRECTION_SLOTS
+                          if self.rows[(source, slot)].dump() is not None]
+            if dragging and directions:
+                note.configure(text=(
+                    "While this button is dragging, it is using the mouse movement as "
+                    "it happens, so there is no direction left to judge when you let "
+                    "go: " + ", ".join(directions) + " will not fire. Press and "
+                    "hold + scroll still work."))
+            else:
+                note.configure(text="")
 
     def _build_wheel_tab(self, notebook: ttk.Notebook) -> None:
         tab = ttk.Frame(notebook, padding=12)
@@ -466,6 +510,7 @@ class SettingsWindow:
             row.load(config.binding(source, slot))
         self.at_startup.set(self.app.starts_at_logon())
         self._refresh_button_list()
+        self.warn_about_conflicts()
         self._set_dirty(False)
 
     def apply(self) -> None:

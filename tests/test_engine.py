@@ -231,6 +231,164 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(sent), 1, "a button's own job always gets done")
 
 
+class DragTests(unittest.TestCase):
+    """Grabbing a window and carrying it about.
+
+    The Win32 calls are replaced so that no real window is ever moved; what is checked
+    is that the engine asks for the right thing at the right moment.
+    """
+
+    WINDOW = 4242
+
+    def setUp(self) -> None:
+        from app import engine as engine_module
+        self.moves: list[tuple[int, int, int]] = []
+        self.resizes: list[tuple[int, int, int]] = []
+        self.restored: list[int] = []
+        self.window_at = self.WINDOW
+        self.rect = (100, 200, 800, 600)
+
+        self._saved = {name: getattr(w, name) for name in
+                       ("draggable_window_at", "window_rect", "move_window",
+                        "resize_window", "unmaximise", "window_class")}
+        w.draggable_window_at = lambda x, y: self.window_at
+        w.window_rect = lambda hwnd: self.rect
+        w.move_window = lambda hwnd, x, y: self.moves.append((hwnd, x, y))
+        w.resize_window = lambda hwnd, cx, cy: self.resizes.append((hwnd, cx, cy))
+        w.unmaximise = lambda hwnd: self.restored.append(hwnd)
+        w.window_class = lambda hwnd: "TestWindow"
+        self._is_window = w.user32.IsWindow
+        w.user32.IsWindow = lambda hwnd: 1
+        self.engine_module = engine_module
+
+    def tearDown(self) -> None:
+        for name, value in self._saved.items():
+            setattr(w, name, value)
+        w.user32.IsWindow = self._is_window
+
+    def build(self, bindings: dict) -> Engine:
+        engine = Engine(Config(enabled=True,
+                               settings={"move_threshold": 30, "tap_milliseconds": 700,
+                                         "wheel_notch": 120},
+                               bindings=bindings))
+        engine.dispatcher = RecordingDispatcher()
+        return engine
+
+    def grab(self) -> Engine:
+        return self.build({"gesture": {"drag": {"action": "grab_window"}}})
+
+    def test_the_window_follows_the_mouse(self):
+        engine = self.grab()
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(560, 540))
+        self.assertEqual(self.moves[-1], (self.WINDOW, 160, 240),
+                         "the window should move by the same amount as the mouse")
+
+    def test_it_keeps_following(self):
+        engine = self.grab()
+        engine.on_button("gesture", True, (500, 500))
+        for x, y in ((510, 505), (530, 520), (600, 560)):
+            engine._track_move(event(x, y))
+        self.assertEqual(len(self.moves), 3)
+        self.assertEqual(self.moves[-1], (self.WINDOW, 200, 260))
+
+    def test_moving_is_relative_to_where_the_grab_began(self):
+        # Not to where the window was last put, which would drift.
+        engine = self.grab()
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(600, 600))
+        engine._track_move(event(500, 500))
+        self.assertEqual(self.moves[-1], (self.WINDOW, 100, 200), "back where it started")
+
+    def test_letting_go_stops_the_drag(self):
+        engine = self.grab()
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(560, 540))
+        engine.on_button("gesture", False, (560, 540))
+        moved = len(self.moves)
+        engine._track_move(event(700, 700))
+        self.assertEqual(len(self.moves), moved, "it should not still be following")
+
+    def test_a_maximised_window_is_restored_before_moving(self):
+        engine = self.grab()
+        engine.on_button("gesture", True, (500, 500))
+        self.assertEqual(self.restored, [self.WINDOW])
+
+    def test_resizing_changes_the_size_and_not_the_position(self):
+        engine = self.build({"gesture": {"drag": {"action": "grab_resize"}}})
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(560, 540))
+        self.assertEqual(self.moves, [])
+        # The window started 800x600 and the mouse moved 60 right and 40 down.
+        self.assertEqual(self.resizes[-1], (self.WINDOW, 860, 640))
+
+    def test_resizing_leaves_a_maximised_window_alone(self):
+        engine = self.build({"gesture": {"drag": {"action": "grab_resize"}}})
+        engine.on_button("gesture", True, (500, 500))
+        self.assertEqual(self.restored, [])
+
+    def test_a_grab_swallows_the_press(self):
+        engine = self.build({"gesture": {"drag": {"action": "grab_window"},
+                                         "tap": {"action": "task_view"}}})
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(560, 540))
+        engine.on_button("gesture", False, (560, 540))
+        self.assertEqual(engine.dispatcher.fired, [],
+                         "a drag is not also a click")
+
+    def test_a_grab_that_never_moved_still_swallows_the_press(self):
+        # The button was used to grab, not to click, even if nothing came of it.
+        engine = self.build({"gesture": {"drag": {"action": "grab_window"},
+                                         "tap": {"action": "task_view"}}})
+        engine.on_button("gesture", True, (500, 500))
+        engine.on_button("gesture", False, (500, 500))
+        self.assertEqual(engine.dispatcher.fired, [])
+
+    def test_directions_do_not_fire_while_dragging(self):
+        engine = self.build({"gesture": {"drag": {"action": "grab_window"},
+                                         "right": {"action": "desktop_next"}}})
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(700, 500))
+        engine.on_button("gesture", False, (700, 500))
+        self.assertEqual(engine.dispatcher.fired, [])
+
+    def test_a_tiny_wobble_does_not_move_the_window(self):
+        engine = self.grab()
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(501, 500))
+        self.assertEqual(self.moves, [], "pressing the button should not nudge it")
+
+    def test_nothing_happens_when_there_is_no_window_under_the_cursor(self):
+        self.window_at = None
+        engine = self.grab()
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(600, 600))
+        self.assertEqual(self.moves, [])
+
+    def test_a_window_that_goes_away_mid_drag_is_dropped(self):
+        engine = self.grab()
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(560, 540))
+        w.user32.IsWindow = lambda hwnd: 0
+        engine._track_move(event(600, 600))
+        self.assertEqual(len(self.moves), 1, "it should stop rather than keep trying")
+
+    def test_a_button_without_a_drag_binding_grabs_nothing(self):
+        engine = self.build({"gesture": {"tap": {"action": "task_view"}}})
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(600, 600))
+        self.assertEqual(self.moves, [])
+
+    def test_the_press_still_works_on_a_button_that_can_also_drag(self):
+        engine = self.build({"gesture": {"drag": {"action": "grab_window"},
+                                         "tap": {"action": "task_view"}}})
+        # No window under the cursor, so no grab happens and the press is just a press.
+        self.window_at = None
+        engine.on_button("gesture", True, (500, 500))
+        engine.on_button("gesture", False, (500, 500))
+        self.assertEqual(engine.dispatcher.fired, [("task_view", "")])
+
+
 class ConfigTests(unittest.TestCase):
     def test_unknown_entries_are_discarded(self):
         from app.config import _clean
@@ -311,8 +469,20 @@ class ComboTests(unittest.TestCase):
             "zoom_in", "zoom_out", "zoom_reset", "scroll_up", "scroll_down",
             "scroll_left", "scroll_right", "middle_click", "lock_pc", "keys", "launch",
         }
+        # Drag actions are a mode the engine runs while the button is held, so they are
+        # never passed to run() at all.
+        runnable |= actions.DRAG_ACTIONS
         for action in actions.CATALOGUE:
             self.assertIn(action.id, runnable, f"{action.id} is offered but not handled")
+
+    def test_drag_actions_are_marked_as_such(self):
+        from app import actions
+        self.assertEqual(actions.DRAG_ACTIONS, {"grab_window", "grab_resize"})
+        for action_id in actions.DRAG_ACTIONS:
+            self.assertTrue(actions.BY_ID[action_id].drag)
+            # They must not also be keystrokes, or they would fire on release as well
+            # as running for the whole hold.
+            self.assertNotIn(action_id, actions._COMBOS)
 
     def test_locking_does_not_go_through_a_keystroke(self):
         # Win+L belongs to winlogon's secure attention path, which injected input

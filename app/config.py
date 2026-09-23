@@ -83,6 +83,8 @@ class Slot:
 # holding the button and then moving or scrolling is another.
 SLOTS: tuple[Slot, ...] = (
     Slot("tap", "Press", "A quick press and release"),
+    Slot("drag", "Hold + drag",
+         "Hold the button and move the mouse - the window follows, all the while"),
     Slot("wheel_up", "Hold + scroll up", "Hold the button and roll the wheel forward"),
     Slot("wheel_down", "Hold + scroll down", "Hold the button and roll the wheel back"),
     Slot("up", "Hold + move up", "Hold the button and push the mouse away from you"),
@@ -90,6 +92,11 @@ SLOTS: tuple[Slot, ...] = (
     Slot("left", "Hold + move left", "Hold the button and move the mouse left"),
     Slot("right", "Hold + move right", "Hold the button and move the mouse right"),
 )
+
+# The directions describe one movement, judged when the button is released. A drag is a
+# continuous thing that consumes movement as it happens, so the two cannot both act on
+# the same button: whichever way the mouse went, the drag has already used it.
+DIRECTION_SLOTS: tuple[str, ...] = ("up", "down", "left", "right")
 
 SLOT_BY_ID: dict[str, Slot] = {slot.id: slot for slot in SLOTS}
 

@@ -547,6 +547,96 @@ def tray_icon() -> wintypes.HICON:
     return user32.LoadIconW(None, ctypes.cast(ctypes.c_void_p(32512), wintypes.LPCWSTR))
 
 
+# Moving a window while a button is held.
+GA_ROOT = 2
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+# Without this, SetWindowPos waits for the target window to handle the message. A window
+# that is busy or hung would then block whichever thread called it - and that thread is
+# the one carrying the mouse hook, which Windows removes if it stops responding. Every
+# move made from inside the hook must be asynchronous.
+SWP_ASYNCWINDOWPOS = 0x4000
+SW_RESTORE = 9
+
+# Windows that must never be dragged: the desktop itself, and the taskbar.
+UNDRAGGABLE_CLASSES = frozenset({
+    "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd",
+    "NotifyIconOverflowWindow", "TopLevelWindowForOverflowXamlIsland",
+    "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow",
+})
+
+user32.WindowFromPoint.argtypes = [wintypes.POINT]
+user32.WindowFromPoint.restype = wintypes.HWND
+user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+user32.GetAncestor.restype = wintypes.HWND
+user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+user32.GetWindowRect.restype = wintypes.BOOL
+user32.SetWindowPos.argtypes = [
+    wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+    ctypes.c_int, ctypes.c_int, wintypes.UINT,
+]
+user32.SetWindowPos.restype = wintypes.BOOL
+user32.IsZoomed.argtypes = [wintypes.HWND]
+user32.IsZoomed.restype = wintypes.BOOL
+user32.IsIconic.argtypes = [wintypes.HWND]
+user32.IsIconic.restype = wintypes.BOOL
+user32.IsWindow.argtypes = [wintypes.HWND]
+user32.IsWindow.restype = wintypes.BOOL
+user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.ShowWindow.restype = wintypes.BOOL
+user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetClassNameW.restype = ctypes.c_int
+
+
+def window_class(hwnd) -> str:
+    name = ctypes.create_unicode_buffer(128)
+    user32.GetClassNameW(hwnd, name, 128)
+    return name.value
+
+
+def draggable_window_at(x: int, y: int):
+    """The top-level window under a point, if it is one that may be moved.
+
+    WindowFromPoint answers with whichever control is under the cursor - a button, a
+    text area - so its top-level ancestor is what actually gets moved.
+    """
+    hwnd = user32.WindowFromPoint(wintypes.POINT(x, y))
+    if not hwnd:
+        return None
+    root = user32.GetAncestor(hwnd, GA_ROOT)
+    if not root or not user32.IsWindow(root):
+        return None
+    if user32.IsIconic(root):
+        return None
+    if window_class(root) in UNDRAGGABLE_CLASSES:
+        return None
+    return root
+
+
+def window_rect(hwnd) -> tuple[int, int, int, int] | None:
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    return rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top
+
+
+def move_window(hwnd, x: int, y: int) -> None:
+    user32.SetWindowPos(hwnd, None, x, y, 0, 0,
+                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)
+
+
+def resize_window(hwnd, width: int, height: int) -> None:
+    user32.SetWindowPos(hwnd, None, 0, 0, max(120, width), max(80, height),
+                        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)
+
+
+def unmaximise(hwnd) -> None:
+    if user32.IsZoomed(hwnd):
+        user32.ShowWindow(hwnd, SW_RESTORE)
+
+
 def claim_single_instance(name: str) -> bool:
     """Whether this process is the first one. The mutex lives until the process exits."""
     handle = kernel32.CreateMutexW(None, False, name)

@@ -33,6 +33,10 @@ class Action:
     # True when repeating the action quickly is meaningful, which is what makes an
     # action a good fit for a scroll trigger rather than a click.
     repeats: bool = False
+    # True for actions that are a continuous mode rather than a single event: they do
+    # their work for as long as the button is held, and are only offered where that
+    # makes sense. Sending Ctrl+C once per pixel of mouse movement does not.
+    drag: bool = False
 
 
 # Straight key combinations, as (modifier virtual keys..., key virtual key).
@@ -124,6 +128,9 @@ CATALOGUE: tuple[Action, ...] = (
     Action("snap_left", "Snap the window left", "Windows"),
     Action("snap_right", "Snap the window right", "Windows"),
     Action("close_window", "Close the window (Alt+F4)", "Windows"),
+
+    Action("grab_window", "Grab the window and move it", "Grab", drag=True),
+    Action("grab_resize", "Grab the window and resize it", "Grab", drag=True),
     Action("search", "Windows search", "Windows"),
     Action("screenshot", "Screenshot selection", "Windows"),
     Action("emoji", "Emoji panel", "Windows"),
@@ -171,6 +178,10 @@ GROUPS: tuple[str, ...] = tuple(dict.fromkeys(action.group for action in CATALOG
 # Actions the engine has to handle itself, because they depend on which button was
 # pressed rather than on what the action is.
 ENGINE_HANDLED = frozenset({"none", "passthrough"})
+
+# Drag actions are a mode, not an event: the engine runs them for as long as the button
+# is held, and run() is never called for them.
+DRAG_ACTIONS = frozenset(action.id for action in CATALOGUE if action.drag)
 
 # ---------------------------------------------------------------------------
 # Key combination text, e.g. "ctrl+shift+m"

@@ -53,6 +53,17 @@ class Held:
 
 
 @dataclass
+class Drag:
+    """A window being carried around by the mouse while a button is held."""
+    hwnd: int
+    action: str
+    origin: tuple[int, int]
+    # Where the window was, and how big, when the button went down.
+    start: tuple[int, int, int, int]
+    moved: bool = False
+
+
+@dataclass
 class Observation:
     """One input event, for the settings window's detector."""
     kind: str
@@ -92,6 +103,7 @@ class Engine:
         self.config = config
         self.dispatcher = Dispatcher()
         self._held: dict[str, Held] = {}
+        self._drags: dict[str, Drag] = {}
         self._wheel_remainder: dict[str, int] = {}
         self._seen: set[tuple[str, str]] = set()
         self._observers: list = []
@@ -103,6 +115,7 @@ class Engine:
         self.config = config
         # Anything mid-hold was decided against the old rules; start clean.
         self._held.clear()
+        self._drags.clear()
         self._wheel_remainder.clear()
         # Report the first use of each binding again, so the log shows the new set
         # proving itself rather than staying silent about it.
@@ -193,15 +206,17 @@ class Engine:
 
         if pressed:
             self._held[source] = Held(source, time.monotonic(), position)
+            self._begin_drag(source, position)
             return True
 
         held = self._held.pop(source, None)
+        dragged = self._end_drag(source)
         if held is None:
             # We never saw the press - it happened before the app started, or while it
             # was disabled. Swallowing a lone release would strand the button down.
             return False
 
-        if held.consumed:
+        if held.consumed or dragged:
             return True
 
         direction = self._direction(held, position)
@@ -222,6 +237,8 @@ class Engine:
         return True
 
     def _track_move(self, info: w.MSLLHOOKSTRUCT) -> None:
+        if self._drags:
+            self._carry(info.pt.x, info.pt.y)
         if not self._held:
             return
         threshold = self._threshold
@@ -247,6 +264,62 @@ class Engine:
         if abs(dx) >= abs(dy):
             return "right" if dx > 0 else "left"
         return "down" if dy > 0 else "up"
+
+    # -- dragging a window -------------------------------------------------
+
+    def _begin_drag(self, source: str, position: tuple[int, int]) -> None:
+        """Take hold of whatever window is under the cursor, if this button drags."""
+        binding = self.config.binding(source, "drag")
+        if binding is None or binding["action"] not in actions.DRAG_ACTIONS:
+            return
+
+        hwnd = w.draggable_window_at(*position)
+        if hwnd is None:
+            return
+        # A maximised window cannot be moved while it is maximised, so restore it
+        # first - which is what dragging a maximised title bar does in Windows.
+        if binding["action"] == "grab_window":
+            w.unmaximise(hwnd)
+        rect = w.window_rect(hwnd)
+        if rect is None:
+            return
+
+        self._drags[source] = Drag(hwnd=hwnd, action=binding["action"],
+                                   origin=position, start=rect)
+        self._observe("drag", f"{source} grabbed {w.window_class(hwnd)}")
+
+    def _carry(self, x: int, y: int) -> None:
+        """Move or resize every grabbed window to follow the cursor.
+
+        Called for every mouse movement while a button is held, so it must stay cheap:
+        the window is positioned asynchronously, and a window that has gone away is
+        dropped rather than retried.
+        """
+        for source, drag in list(self._drags.items()):
+            if not w.user32.IsWindow(drag.hwnd):
+                del self._drags[source]
+                continue
+            dx = x - drag.origin[0]
+            dy = y - drag.origin[1]
+            if not drag.moved and max(abs(dx), abs(dy)) < 2:
+                continue  # ignore the shake of pressing the button
+            drag.moved = True
+            left, top, width, height = drag.start
+            if drag.action == "grab_resize":
+                w.resize_window(drag.hwnd, width + dx, height + dy)
+            else:
+                w.move_window(drag.hwnd, left + dx, top + dy)
+
+    def _end_drag(self, source: str) -> bool:
+        """Let go. Returns whether this button was actually dragging something."""
+        drag = self._drags.pop(source, None)
+        if drag is None:
+            return False
+        if drag.moved:
+            self._observe("drag", f"{source} released")
+        # Even a grab that never moved has consumed the button: the press was a grab,
+        # not a click, and firing the press action too would be a surprise.
+        return True
 
     def _passthrough(self, source: str) -> None:
         recipe = PASSTHROUGH.get(source)
@@ -325,6 +398,10 @@ class Engine:
             self._passthrough(source)
             return
         if action_id == "none":
+            return
+        if action_id in actions.DRAG_ACTIONS:
+            # A mode, not an event. The drag machinery runs it while the button is
+            # held; there is nothing to fire on release.
             return
         # The first time a binding fires it is recorded plainly, so the log answers
         # "is this thing working at all?" without having to be turned up first. After
