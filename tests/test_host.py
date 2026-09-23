@@ -118,21 +118,39 @@ class TopmostRepairTests(unittest.TestCase):
     left both a PowerPoint and an Edge window flagged always-on-top, so each stayed
     ahead of everything else - including whatever was clicked on the taskbar - until
     the flag was cleared by hand.
+
+    An earlier version of this test launched a real Notepad window to test against.
+    Windows 11's Notepad remembers every window that was open across past sessions
+    and restores all of them on the next launch, whether or not this test's own
+    window was closed properly - so a single test run could leave dozens of stray
+    Notepad windows behind, with no amount of cleanup in this file able to stop it.
+    A window this test creates and owns outright, destroyed with DestroyWindow
+    rather than asked nicely to close itself, sidesteps all of that.
     """
 
+    CLASS_NAME = "MxMasterTweakerTopmostTest"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._wndproc = w.WNDPROC(lambda hwnd, msg, wp, lp: w.user32.DefWindowProcW(hwnd, msg, wp, lp))
+        wndclass = w.WNDCLASSW()
+        wndclass.lpfnWndProc = cls._wndproc
+        wndclass.hInstance = w.kernel32.GetModuleHandleW(None)
+        wndclass.lpszClassName = cls.CLASS_NAME
+        w.user32.RegisterClassW(ctypes.byref(wndclass))
+
     def setUp(self) -> None:
-        import subprocess
-        import time
-        self.process = subprocess.Popen(["notepad.exe"])
-        time.sleep(1.5)
-        self.hwnd = w.user32.FindWindowW("Notepad", None)
+        WS_OVERLAPPEDWINDOW = 0x00CF0000
+        WS_VISIBLE = 0x10000000
+        self.hwnd = w.user32.CreateWindowExW(
+            0, self.CLASS_NAME, "topmost repair test", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            100, 100, 300, 200, None, None, w.kernel32.GetModuleHandleW(None), None)
         if not self.hwnd:
-            self.process.terminate()
-            self.skipTest("could not open a Notepad window to test against")
+            self.skipTest("could not create a test window")
 
     def tearDown(self) -> None:
-        self.process.terminate()
-        self.process.wait(timeout=5)
+        if self.hwnd:
+            w.user32.DestroyWindow(self.hwnd)
 
     def _set_topmost(self) -> None:
         w.user32.SetWindowPos(self.hwnd, w.HWND_TOPMOST, 0, 0, 0, 0,
@@ -158,10 +176,7 @@ class TopmostRepairTests(unittest.TestCase):
         self.assertFalse(w.is_topmost(self.hwnd))
 
     def test_a_closed_window_is_not_a_problem(self):
-        self.process.terminate()
-        self.process.wait(timeout=5)
-        import time
-        time.sleep(0.5)
+        w.user32.DestroyWindow(self.hwnd)
         w.clear_topmost(self.hwnd)  # must not raise
 
     def test_a_null_handle_is_not_a_problem(self):

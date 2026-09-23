@@ -58,8 +58,10 @@ class Drag:
     hwnd: int
     action: str
     origin: tuple[int, int]
-    # Where the window was, and how big, when the button went down.
-    start: tuple[int, int, int, int]
+    # Where the window was, and how big, when it actually started moving. Left unset
+    # until then: a plain click must never touch the window at all, only a drag that
+    # really happens should.
+    start: tuple[int, int, int, int] | None = None
     moved: bool = False
     # Set while the cursor is near a screen edge, to (zone, work_area). Only moving a
     # window can end in a snap; resizing keeps whatever size you drag it to.
@@ -271,25 +273,21 @@ class Engine:
     # -- dragging a window -------------------------------------------------
 
     def _begin_drag(self, source: str, position: tuple[int, int]) -> None:
-        """Take hold of whatever window is under the cursor, if this button drags."""
+        """Note which window is under the cursor, in case this press turns into a drag.
+
+        Nothing about the window is touched here - not even a maximised window is
+        restored - because most presses of a button bound to Hold + drag are not a
+        drag at all: they are an ordinary click, and a click must work exactly as it
+        always has. The window is only actually grabbed once the mouse has moved far
+        enough that this really is a drag; see ``_carry``.
+        """
         binding = self.config.binding(source, "drag")
         if binding is None or binding["action"] not in actions.DRAG_ACTIONS:
             return
-
         hwnd = w.draggable_window_at(*position)
         if hwnd is None:
             return
-        # A maximised window cannot be moved while it is maximised, so restore it
-        # first - which is what dragging a maximised title bar does in Windows.
-        if binding["action"] == "grab_window":
-            w.unmaximise(hwnd)
-        rect = w.window_rect(hwnd)
-        if rect is None:
-            return
-
-        self._drags[source] = Drag(hwnd=hwnd, action=binding["action"],
-                                   origin=position, start=rect)
-        self._observe("drag", f"{source} grabbed {w.window_class(hwnd)}")
+        self._drags[source] = Drag(hwnd=hwnd, action=binding["action"], origin=position)
 
     def _carry(self, x: int, y: int) -> None:
         """Move or resize every grabbed window to follow the cursor.
@@ -307,7 +305,22 @@ class Engine:
             dy = y - drag.origin[1]
             if not drag.moved and max(abs(dx), abs(dy)) < 2:
                 continue  # ignore the shake of pressing the button
-            drag.moved = True
+
+            if not drag.moved:
+                # The exact moment a press turns into a real drag. A maximised window
+                # is restored only now, the same as dragging a real title bar does,
+                # and its rect is captured only now too, so later moves are measured
+                # from where the window actually is rather than where it was before
+                # being restored.
+                if drag.action == "grab_window":
+                    w.unmaximise(drag.hwnd)
+                drag.start = w.window_rect(drag.hwnd)
+                if drag.start is None:
+                    del self._drags[source]
+                    continue
+                drag.moved = True
+                self._observe("drag", f"{source} grabbed {w.window_class(drag.hwnd)}")
+
             left, top, width, height = drag.start
             if drag.action == "grab_resize":
                 w.resize_window(drag.hwnd, width + dx, height + dy)
@@ -319,19 +332,24 @@ class Engine:
                 drag.snap = w.snap_zone_at(x, y) if snapping else None
 
     def _end_drag(self, source: str) -> bool:
-        """Let go. Returns whether this button was actually dragging something."""
+        """Let go. Returns whether this button just performed a real drag.
+
+        A press that grabbed a window but never actually moved it is not a drag - it
+        is an ordinary click that happened to land on a window with a Hold + drag
+        binding, such as clicking Back or Forward while it hovers over a browser. That
+        must still fire whatever Press is bound to, Pass through included. Consuming
+        the button outright here is exactly the bug reported: an ordinary click no
+        longer working because a window happened to be under the cursor.
+        """
         drag = self._drags.pop(source, None)
-        if drag is None:
+        if drag is None or not drag.moved:
             return False
-        if drag.moved:
-            if drag.snap and w.user32.IsWindow(drag.hwnd):
-                zone, area = drag.snap
-                w.apply_snap(drag.hwnd, zone, area)
-                self._observe("drag", f"{source} released - snapped {zone}")
-            else:
-                self._observe("drag", f"{source} released")
-        # Even a grab that never moved has consumed the button: the press was a grab,
-        # not a click, and firing the press action too would be a surprise.
+        if drag.snap and w.user32.IsWindow(drag.hwnd):
+            zone, area = drag.snap
+            w.apply_snap(drag.hwnd, zone, area)
+            self._observe("drag", f"{source} released - snapped {zone}")
+        else:
+            self._observe("drag", f"{source} released")
         return True
 
     def _passthrough(self, source: str) -> None:

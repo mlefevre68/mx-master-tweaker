@@ -315,10 +315,15 @@ class DragTests(unittest.TestCase):
         engine._track_move(event(700, 700))
         self.assertEqual(len(self.moves), moved, "it should not still be following")
 
-    def test_a_maximised_window_is_restored_before_moving(self):
+    def test_a_maximised_window_is_only_restored_once_dragging_really_starts(self):
+        # Not on the press itself: a plain click on a window with a Hold + drag
+        # binding must never touch it, or an ordinary click would un-maximise
+        # whatever it happened to land on.
         engine = self.grab()
         engine.on_button("gesture", True, (500, 500))
-        self.assertEqual(self.restored, [self.WINDOW])
+        self.assertEqual(self.restored, [], "a press alone must not restore anything")
+        engine._track_move(event(560, 540))
+        self.assertEqual(self.restored, [self.WINDOW], "restored once it actually drags")
 
     def test_resizing_changes_the_size_and_not_the_position(self):
         engine = self.build({"gesture": {"drag": {"action": "grab_resize"}}})
@@ -342,13 +347,33 @@ class DragTests(unittest.TestCase):
         self.assertEqual(engine.dispatcher.fired, [],
                          "a drag is not also a click")
 
-    def test_a_grab_that_never_moved_still_swallows_the_press(self):
-        # The button was used to grab, not to click, even if nothing came of it.
+    def test_a_click_that_never_moves_is_not_a_drag_and_still_fires_the_press(self):
+        # This is the bug that was reported: a window under the cursor is the normal
+        # case for the Back and Forward buttons, since they are used while hovering
+        # over a browser. A quick click there must behave exactly as it always did.
         engine = self.build({"gesture": {"drag": {"action": "grab_window"},
                                          "tap": {"action": "task_view"}}})
         engine.on_button("gesture", True, (500, 500))
         engine.on_button("gesture", False, (500, 500))
-        self.assertEqual(engine.dispatcher.fired, [])
+        self.assertEqual(engine.dispatcher.fired, [("task_view", "")],
+                         "a click that never dragged anything must still act as a click")
+
+    def test_pass_through_survives_having_a_drag_binding_on_the_same_button(self):
+        # The exact real-world case: Back/Forward bound to Pass through on Press, and
+        # also to Hold + drag, which is normal - most presses of that button are quick
+        # clicks with a browser window sitting right under the cursor.
+        sent: list = []
+        original = w.send_inputs
+        w.send_inputs = lambda items: sent.append(items)
+        try:
+            engine = self.build({"x1": {"tap": {"action": "passthrough"},
+                                        "drag": {"action": "grab_window"}}})
+            engine.on_button("x1", True, (500, 500))
+            engine.on_button("x1", False, (500, 500))
+        finally:
+            w.send_inputs = original
+        self.assertEqual(len(sent), 1, "pass through must still fire on a plain click")
+        self.assertEqual(self.moves, [], "and the window must not have been touched")
 
     def test_directions_do_not_fire_while_dragging(self):
         engine = self.build({"gesture": {"drag": {"action": "grab_window"},
