@@ -481,6 +481,13 @@ shell32.ShellExecuteW.argtypes = [
 ]
 shell32.ShellExecuteW.restype = wintypes.HINSTANCE
 
+# Locking the workstation has its own API and cannot be done by sending Win+L. That
+# hotkey is handled by winlogon on the secure attention path, deliberately out of reach
+# of injected input so that nothing can imitate or interfere with the lock screen, so
+# SendInput delivers the keystroke and nothing whatsoever happens.
+user32.LockWorkStation.argtypes = []
+user32.LockWorkStation.restype = wintypes.BOOL
+
 ERROR_ALREADY_EXISTS = 183
 
 # ---------------------------------------------------------------------------

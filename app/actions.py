@@ -8,6 +8,7 @@ and it needs no COM, no elevation and no extra dependency.
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import shlex
@@ -53,7 +54,6 @@ _COMBOS: dict[str, tuple[int, ...]] = {
     "show_desktop": (w.VK_LWIN, ord("D")),
     "minimise_all": (w.VK_LWIN, ord("M")),
     "restore_windows": (w.VK_LWIN, w.VK_SHIFT, ord("M")),
-    "lock_pc": (w.VK_LWIN, ord("L")),
     "minimise_window": (w.VK_LWIN, w.VK_DOWN),
     "maximise_window": (w.VK_LWIN, w.VK_UP),
     "snap_left": (w.VK_LWIN, w.VK_LEFT),
@@ -128,7 +128,6 @@ CATALOGUE: tuple[Action, ...] = (
     Action("screenshot", "Screenshot selection", "Windows"),
     Action("emoji", "Emoji panel", "Windows"),
     Action("lock_pc", "Lock the computer", "Windows"),
-
     Action("nav_back", "Back", "Navigation", repeats=True),
     Action("nav_forward", "Forward", "Navigation", repeats=True),
     Action("tab_next", "Next tab", "Navigation", repeats=True),
@@ -274,6 +273,17 @@ def _wheel_with_control(notches: int) -> None:
     ])
 
 
+def _lock() -> None:
+    """Lock the workstation through the API that exists for it.
+
+    Sending Win+L looks like it ought to work and never does: that hotkey belongs to
+    winlogon's secure attention path, which injected input deliberately cannot reach.
+    """
+    if not w.user32.LockWorkStation():
+        log.warning("Windows would not lock the workstation (error %s)",
+                    ctypes.get_last_error())
+
+
 def _launch(target: str) -> None:
     target = (target or "").strip()
     if not target:
@@ -317,6 +327,8 @@ def run(action_id: str, value: str = "") -> None:
         elif action_id == "middle_click":
             w.send_inputs([w.mouse_input(w.MOUSEEVENTF_MIDDLEDOWN),
                            w.mouse_input(w.MOUSEEVENTF_MIDDLEUP)])
+        elif action_id == "lock_pc":
+            _lock()
         elif action_id == "keys":
             combo = parse_combo(value)
             if combo is None:

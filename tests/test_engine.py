@@ -309,10 +309,41 @@ class ComboTests(unittest.TestCase):
         from app import actions
         runnable = set(actions._COMBOS) | actions.ENGINE_HANDLED | {
             "zoom_in", "zoom_out", "zoom_reset", "scroll_up", "scroll_down",
-            "scroll_left", "scroll_right", "middle_click", "keys", "launch",
+            "scroll_left", "scroll_right", "middle_click", "lock_pc", "keys", "launch",
         }
         for action in actions.CATALOGUE:
             self.assertIn(action.id, runnable, f"{action.id} is offered but not handled")
+
+    def test_locking_does_not_go_through_a_keystroke(self):
+        # Win+L belongs to winlogon's secure attention path, which injected input
+        # cannot reach. Sending it delivers the keys and leaves the machine unlocked,
+        # so this has to use LockWorkStation instead - and must not quietly regress
+        # into the combos table, where it would look implemented and do nothing.
+        from app import actions
+        self.assertNotIn("lock_pc", actions._COMBOS)
+        self.assertTrue(hasattr(w.user32, "LockWorkStation"))
+
+    def test_locking_calls_the_api(self):
+        from app import actions
+        called = []
+        original = w.user32.LockWorkStation
+        w.user32.LockWorkStation = lambda: (called.append(True), 1)[1]
+        try:
+            actions.run("lock_pc")
+        finally:
+            w.user32.LockWorkStation = original
+        self.assertEqual(called, [True], "lock_pc did not call LockWorkStation")
+
+    def test_a_refused_lock_is_reported_rather_than_ignored(self):
+        from app import actions
+        original = w.user32.LockWorkStation
+        w.user32.LockWorkStation = lambda: 0  # as Windows reports a refusal
+        try:
+            with self.assertLogs("app.actions", level="WARNING") as captured:
+                actions.run("lock_pc")
+        finally:
+            w.user32.LockWorkStation = original
+        self.assertTrue(any("lock" in line.lower() for line in captured.output))
 
     def test_showing_the_desktop_has_a_way_back(self):
         from app import actions
