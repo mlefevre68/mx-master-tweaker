@@ -110,6 +110,64 @@ class DeviceListTests(unittest.TestCase):
     def test_at_least_one_mouse_is_present(self):
         self.assertTrue(any(d["type"] == "mouse" for d in w.input_devices()))
 
+
+class TopmostRepairTests(unittest.TestCase):
+    """Undoing the Windows bug where a snapped window sticks always-on-top.
+
+    Confirmed on a real desktop while this bug was reported: an injected Win+Arrow
+    left both a PowerPoint and an Edge window flagged always-on-top, so each stayed
+    ahead of everything else - including whatever was clicked on the taskbar - until
+    the flag was cleared by hand.
+    """
+
+    def setUp(self) -> None:
+        import subprocess
+        import time
+        self.process = subprocess.Popen(["notepad.exe"])
+        time.sleep(1.5)
+        self.hwnd = w.user32.FindWindowW("Notepad", None)
+        if not self.hwnd:
+            self.process.terminate()
+            self.skipTest("could not open a Notepad window to test against")
+
+    def tearDown(self) -> None:
+        self.process.terminate()
+        self.process.wait(timeout=5)
+
+    def _set_topmost(self) -> None:
+        w.user32.SetWindowPos(self.hwnd, w.HWND_TOPMOST, 0, 0, 0, 0,
+                              w.SWP_NOMOVE | w.SWP_NOSIZE | w.SWP_NOACTIVATE)
+        # SWP_ASYNCWINDOWPOS is not used here, so this one takes effect immediately -
+        # the point is to set up the "already topmost" state to repair afterwards.
+
+    def _settle(self) -> None:
+        import time
+        time.sleep(0.4)  # clear_topmost uses SWP_ASYNCWINDOWPOS, which lands shortly after
+
+    def test_a_window_that_is_not_topmost_is_left_alone(self):
+        self.assertFalse(w.is_topmost(self.hwnd))
+        w.clear_topmost(self.hwnd)
+        self._settle()
+        self.assertFalse(w.is_topmost(self.hwnd))
+
+    def test_a_topmost_window_is_repaired(self):
+        self._set_topmost()
+        self.assertTrue(w.is_topmost(self.hwnd), "the test setup itself did not work")
+        w.clear_topmost(self.hwnd)
+        self._settle()
+        self.assertFalse(w.is_topmost(self.hwnd))
+
+    def test_a_closed_window_is_not_a_problem(self):
+        self.process.terminate()
+        self.process.wait(timeout=5)
+        import time
+        time.sleep(0.5)
+        w.clear_topmost(self.hwnd)  # must not raise
+
+    def test_a_null_handle_is_not_a_problem(self):
+        w.clear_topmost(0)
+        w.clear_topmost(None)
+
     def test_vendor_collections_are_picked_out_for_deep_listening(self):
         # A mouse puts buttons Windows has no standard slot for on a vendor-defined
         # page, so those are exactly the ones the detector has to subscribe to.

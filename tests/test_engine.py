@@ -515,6 +515,51 @@ class ComboTests(unittest.TestCase):
             w.user32.LockWorkStation = original
         self.assertTrue(any("lock" in line.lower() for line in captured.output))
 
+    def test_snapping_repairs_the_always_on_top_bug(self):
+        # Confirmed on a real desktop: an injected Win+Arrow can leave the window it
+        # acted on flagged always-on-top, so it stays ahead of everything else until
+        # something clears the flag. The repair must target whichever window was
+        # active *before* the keys went out, since that is what Win+Arrow acts on.
+        from app import actions
+        target = 424242
+        original_fg = w.user32.GetForegroundWindow
+        original_clear = w.clear_topmost
+        cleared = []
+        w.user32.GetForegroundWindow = lambda: target
+        w.clear_topmost = lambda hwnd: cleared.append(hwnd)
+        original_timer = actions.threading.Timer
+
+        class ImmediateTimer:
+            def __init__(self, interval, function, args=()):
+                self._function, self._args = function, args
+
+            def start(self):
+                self._function(*self._args)
+
+        actions.threading.Timer = ImmediateTimer
+        try:
+            actions.run("snap_left")
+        finally:
+            w.user32.GetForegroundWindow = original_fg
+            w.clear_topmost = original_clear
+            actions.threading.Timer = original_timer
+        self.assertEqual(cleared, [target])
+
+    def test_only_the_snap_family_gets_the_repair(self):
+        from app import actions
+        self.assertEqual(actions.SNAP_FAMILY,
+                         {"snap_left", "snap_right", "maximise_window", "minimise_window"})
+        # An ordinary combo must not pay for a GetForegroundWindow call and a timer it
+        # does not need.
+        original = w.user32.GetForegroundWindow
+        called = []
+        w.user32.GetForegroundWindow = lambda: called.append(True) or 0
+        try:
+            actions.run("copy")
+        finally:
+            w.user32.GetForegroundWindow = original
+        self.assertEqual(called, [])
+
     def test_showing_the_desktop_has_a_way_back(self):
         from app import actions
         # Win+D toggles, and Win+Shift+M restores what was minimised. Both are needed:

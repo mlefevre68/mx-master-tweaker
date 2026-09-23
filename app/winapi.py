@@ -559,6 +559,15 @@ SWP_NOACTIVATE = 0x0010
 # move made from inside the hook must be asynchronous.
 SWP_ASYNCWINDOWPOS = 0x4000
 SW_RESTORE = 9
+SW_MAXIMIZE = 3
+
+# WS_EX_TOPMOST and the pseudo-handles SetWindowPos uses to change it. ctypes wraps
+# these negative values correctly into a full-width HWND, so no special casting is
+# needed beyond passing them as HWND(-1) / HWND(-2).
+GWL_EXSTYLE = -20
+WS_EX_TOPMOST = 0x00000008
+HWND_TOPMOST = wintypes.HWND(-1)
+HWND_NOTOPMOST = wintypes.HWND(-2)
 
 # Windows that must never be dragged: the desktop itself, and the taskbar.
 UNDRAGGABLE_CLASSES = frozenset({
@@ -584,6 +593,9 @@ user32.IsIconic.argtypes = [wintypes.HWND]
 user32.IsIconic.restype = wintypes.BOOL
 user32.IsWindow.argtypes = [wintypes.HWND]
 user32.IsWindow.restype = wintypes.BOOL
+user32.GetForegroundWindow.restype = wintypes.HWND
+user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.GetWindowLongW.restype = ctypes.c_long
 user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.ShowWindow.restype = wintypes.BOOL
 user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
@@ -635,6 +647,28 @@ def resize_window(hwnd, width: int, height: int) -> None:
 def unmaximise(hwnd) -> None:
     if user32.IsZoomed(hwnd):
         user32.ShowWindow(hwnd, SW_RESTORE)
+
+
+def is_topmost(hwnd) -> bool:
+    return bool(user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST)
+
+
+def clear_topmost(hwnd) -> None:
+    """Undo a Windows bug where snapping a window with an injected Win+Arrow can
+    leave it flagged always-on-top, so it stays ahead of everything else you click on
+    afterwards - including things you click on the taskbar.
+
+    A real, physical Win+Arrow press does not do this; the shell's snap-layout code
+    appears to race when all four key events are delivered by SendInput at once
+    instead of arriving with the small, natural gaps a human hand produces. The flag
+    is only ever cleared when it is actually set, so a window the user deliberately
+    made always-on-top with something else is left alone.
+    """
+    if not hwnd or not user32.IsWindow(hwnd):
+        return
+    if is_topmost(hwnd):
+        user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)
 
 
 def claim_single_instance(name: str) -> bool:

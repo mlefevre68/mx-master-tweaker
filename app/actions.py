@@ -12,6 +12,7 @@ import ctypes
 import logging
 import os
 import shlex
+import threading
 from dataclasses import dataclass
 
 from . import winapi as w
@@ -97,6 +98,15 @@ _COMBOS: dict[str, tuple[int, ...]] = {
     "teams_share": (w.VK_CONTROL, w.VK_SHIFT, ord("E")),
     "teams_hangup": (w.VK_CONTROL, w.VK_SHIFT, ord("H")),
 }
+
+SNAP_FAMILY = frozenset({"snap_left", "snap_right", "maximise_window", "minimise_window"})
+# Windows has a genuine bug here, confirmed on a real desktop while diagnosing this:
+# an injected Win+Arrow can leave the affected window flagged always-on-top, so it
+# stays ahead of everything else - including whatever you click on the taskbar
+# afterwards - until something clears the flag. A real, physical key press does not
+# do this; sending all four key events through SendInput at once appears to race the
+# shell's own snap-layout bookkeeping. These are the actions that go through Win+Arrow
+# and can trigger it - see _tap_snap below.
 
 CATALOGUE: tuple[Action, ...] = (
     Action("none", "Nothing (swallow the button)", "Nothing"),
@@ -271,6 +281,20 @@ def _tap(modifiers: list[int] | tuple[int, ...], key: int) -> None:
     w.send_inputs(events)
 
 
+def _tap_snap(modifiers: list[int] | tuple[int, ...], key: int) -> None:
+    """Send a Win+Arrow hotkey, then repair the always-on-top bug it can trigger.
+
+    The window affected is whichever one is active before the keys go out - that is
+    what Win+Arrow acts on. SetWindowPos's asynchronous flag means the repair itself
+    takes a moment to land, so this waits briefly for the shell's own snap animation
+    to finish rather than checking immediately and finding nothing to fix yet.
+    """
+    target = w.user32.GetForegroundWindow()
+    _tap(modifiers, key)
+    if target:
+        threading.Timer(0.3, w.clear_topmost, args=(target,)).start()
+
+
 def _wheel_with_control(notches: int) -> None:
     """Zoom the way a mouse zooms: Ctrl held while the wheel turns.
 
@@ -320,7 +344,10 @@ def run(action_id: str, value: str = "") -> None:
     try:
         if action_id in _COMBOS:
             keys = _COMBOS[action_id]
-            _tap(keys[:-1], keys[-1])
+            if action_id in SNAP_FAMILY:
+                _tap_snap(keys[:-1], keys[-1])
+            else:
+                _tap(keys[:-1], keys[-1])
         elif action_id == "zoom_in":
             _wheel_with_control(1)
         elif action_id == "zoom_out":
