@@ -644,6 +644,81 @@ def resize_window(hwnd, width: int, height: int) -> None:
                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)
 
 
+# Snapping a dragged window to the screen edge, the way Windows' own title-bar drag
+# does. Windows shows a translucent preview as you approach the edge and only resizes
+# the window on release; this settles for the simpler half of that - no preview, but
+# the same result once you let go - which is most of the value for a fraction of the
+# work a live preview overlay would take.
+MONITOR_DEFAULTTONEAREST = 0x00000002
+SNAP_EDGE_MARGIN = 24  # pixels from the edge that counts as "at the edge"
+
+
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+    ]
+
+
+user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+user32.MonitorFromPoint.restype = wintypes.HANDLE
+user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
+user32.GetMonitorInfoW.restype = wintypes.BOOL
+
+
+def monitor_work_area(x: int, y: int) -> tuple[int, int, int, int] | None:
+    """The usable area (screen minus the taskbar) of whichever monitor a point is on."""
+    monitor = user32.MonitorFromPoint(wintypes.POINT(x, y), MONITOR_DEFAULTTONEAREST)
+    if not monitor:
+        return None
+    info = MONITORINFO()
+    info.cbSize = ctypes.sizeof(MONITORINFO)
+    if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        return None
+    work = info.rcWork
+    return work.left, work.top, work.right, work.bottom
+
+
+def snap_zone_at(x: int, y: int, margin: int = SNAP_EDGE_MARGIN):
+    """Which edge of its monitor a point is close to, if any.
+
+    Returns ``(zone, work_area)`` - ``zone`` is ``"left"``, ``"right"`` or
+    ``"maximize"`` - or ``None`` when the point is not near an edge. The top edge wins
+    over the side edges, which is what lets a drag into a top corner still maximise
+    rather than being read as a side snap that happens to also be near the top.
+    """
+    area = monitor_work_area(x, y)
+    if area is None:
+        return None
+    left, top, right, bottom = area
+    if y <= top + margin:
+        return "maximize", area
+    if x <= left + margin:
+        return "left", area
+    if x >= right - margin:
+        return "right", area
+    return None
+
+
+def apply_snap(hwnd, zone: str, area: tuple[int, int, int, int]) -> None:
+    """Put a window into a snapped layout, the same shapes Windows' own snap uses."""
+    left, top, right, bottom = area
+    if zone == "maximize":
+        # A real maximise, not just a window sized to fill the screen: this is what
+        # lets a later double-click on the title bar, or Win+Down, restore it properly.
+        user32.ShowWindow(hwnd, SW_MAXIMIZE)
+        return
+    half = (right - left) // 2
+    if zone == "left":
+        user32.SetWindowPos(hwnd, None, left, top, half, bottom - top,
+                            SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)
+    elif zone == "right":
+        user32.SetWindowPos(hwnd, None, left + half, top, right - left - half, bottom - top,
+                            SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS)
+
+
 def unmaximise(hwnd) -> None:
     if user32.IsZoomed(hwnd):
         user32.ShowWindow(hwnd, SW_RESTORE)

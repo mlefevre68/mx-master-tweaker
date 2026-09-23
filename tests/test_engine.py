@@ -250,13 +250,20 @@ class DragTests(unittest.TestCase):
 
         self._saved = {name: getattr(w, name) for name in
                        ("draggable_window_at", "window_rect", "move_window",
-                        "resize_window", "unmaximise", "window_class")}
+                        "resize_window", "unmaximise", "window_class",
+                        "snap_zone_at", "apply_snap")}
         w.draggable_window_at = lambda x, y: self.window_at
         w.window_rect = lambda hwnd: self.rect
         w.move_window = lambda hwnd, x, y: self.moves.append((hwnd, x, y))
         w.resize_window = lambda hwnd, cx, cy: self.resizes.append((hwnd, cx, cy))
         w.unmaximise = lambda hwnd: self.restored.append(hwnd)
         w.window_class = lambda hwnd: "TestWindow"
+        # No zone unless a test says otherwise: real screen coordinates would
+        # occasionally, accidentally be near a real edge on whatever machine runs this.
+        self.zone = None
+        self.snapped: list[tuple[int, str, tuple]] = []
+        w.snap_zone_at = lambda x, y: self.zone
+        w.apply_snap = lambda hwnd, zone, area: self.snapped.append((hwnd, zone, area))
         self._is_window = w.user32.IsWindow
         w.user32.IsWindow = lambda hwnd: 1
         self.engine_module = engine_module
@@ -266,11 +273,10 @@ class DragTests(unittest.TestCase):
             setattr(w, name, value)
         w.user32.IsWindow = self._is_window
 
-    def build(self, bindings: dict) -> Engine:
-        engine = Engine(Config(enabled=True,
-                               settings={"move_threshold": 30, "tap_milliseconds": 700,
-                                         "wheel_notch": 120},
-                               bindings=bindings))
+    def build(self, bindings: dict, **settings) -> Engine:
+        base = {"move_threshold": 30, "tap_milliseconds": 700, "wheel_notch": 120}
+        base.update(settings)
+        engine = Engine(Config(enabled=True, settings=base, bindings=bindings))
         engine.dispatcher = RecordingDispatcher()
         return engine
 
@@ -387,6 +393,67 @@ class DragTests(unittest.TestCase):
         engine.on_button("gesture", True, (500, 500))
         engine.on_button("gesture", False, (500, 500))
         self.assertEqual(engine.dispatcher.fired, [("task_view", "")])
+
+    # -- snapping to a screen edge ------------------------------------------
+
+    def test_releasing_near_an_edge_snaps_the_window(self):
+        engine = self.grab()
+        area = (0, 0, 1920, 1040)
+        self.zone = ("left", area)
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(10, 500))  # dragged to the left edge
+        engine.on_button("gesture", False, (10, 500))
+        self.assertEqual(self.snapped, [(self.WINDOW, "left", area)])
+
+    def test_a_free_release_does_not_snap(self):
+        engine = self.grab()
+        self.zone = None  # nowhere near an edge
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(560, 540))
+        engine.on_button("gesture", False, (560, 540))
+        self.assertEqual(self.snapped, [])
+        # The window was still moved normally.
+        self.assertEqual(self.moves[-1], (self.WINDOW, 160, 240))
+
+    def test_moving_away_from_the_edge_again_cancels_the_snap(self):
+        # The zone is re-checked on every move, so drifting back off the edge before
+        # letting go must not leave a stale snap queued up.
+        engine = self.grab()
+        engine.on_button("gesture", True, (500, 500))
+        self.zone = ("right", (0, 0, 1920, 1040))
+        engine._track_move(event(1910, 500))
+        self.zone = None
+        engine._track_move(event(700, 500))
+        engine.on_button("gesture", False, (700, 500))
+        self.assertEqual(self.snapped, [])
+
+    def test_resizing_never_snaps(self):
+        # Windows only offers this from a title-bar drag, never from a resize handle,
+        # and pinning a resize to a screen edge would be a surprise, not a convenience.
+        engine = self.build({"gesture": {"drag": {"action": "grab_resize"}}})
+        self.zone = ("left", (0, 0, 1920, 1040))
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(10, 500))
+        engine.on_button("gesture", False, (10, 500))
+        self.assertEqual(self.snapped, [])
+
+    def test_turning_the_setting_off_stops_it_snapping(self):
+        engine = self.build({"gesture": {"drag": {"action": "grab_window"}}},
+                            snap_on_drag=False)
+        self.zone = ("maximize", (0, 0, 1920, 1040))
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(500, 5))
+        engine.on_button("gesture", False, (500, 5))
+        self.assertEqual(self.snapped, [])
+
+    def test_a_window_that_closed_mid_drag_is_not_snapped(self):
+        engine = self.grab()
+        self.zone = ("left", (0, 0, 1920, 1040))
+        engine.on_button("gesture", True, (500, 500))
+        engine._track_move(event(10, 500))
+        w.user32.IsWindow = lambda hwnd: 0
+        engine.on_button("gesture", False, (10, 500))
+        self.assertEqual(self.snapped, [])
 
 
 class ConfigTests(unittest.TestCase):

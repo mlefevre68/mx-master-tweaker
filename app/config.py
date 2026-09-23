@@ -130,6 +130,9 @@ def defaults() -> dict:
             "wheel_notch": 120,
             "invert_thumbwheel": False,
             "show_notifications": True,
+            # Drag a window to a screen edge and let go, and it snaps there - the same
+            # left/right half or maximise Windows' own title-bar drag gives you.
+            "snap_on_drag": True,
             # The gesture button is only reachable by asking the mouse itself to report
             # it, over Logitech's own protocol. Turn this off to leave the mouse's
             # configuration completely untouched.

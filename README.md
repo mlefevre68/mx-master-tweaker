@@ -116,6 +116,14 @@ bindings on the same button (`Hold + move up/down/left/right`) have nothing left
 judge when you let go, and will not fire. The settings window says so if you bind both.
 Press and Hold + scroll are unaffected and still work.
 
+Drag a window to a screen edge and let go, and it snaps there - left half, right half,
+or maximise for the top edge - the same result as dragging a real title bar to the edge
+gives you. There is no live preview outline while you drag, only the snap when you
+release, which is what keeps this simple: it is a check against where the cursor ends
+up, not a redraw of a translucent overlay on every monitor as you move. Turn it off with
+**Snap a grabbed window to the screen edge** on the **Thumb wheel** tab if you would
+rather the window always stay exactly where you drop it.
+
 ## The gesture button
 
 The gesture button is the wide flat one your thumb rests on, and it takes more than a

@@ -34,6 +34,11 @@ A button bound to Hold + drag has no directions left: by the time you let go, th
 movement has already been used to carry the window, so there is nothing left to judge \
 a direction from. Press and Hold + scroll still work normally on the same button.
 
+Drag a window to a screen edge and let go, and it snaps there - the same left half, \
+right half or maximise you get from dragging a real title bar to the edge. There is no \
+preview outline while you drag, only the snap itself when you release; turn it off on \
+the Thumb wheel tab if you would rather the window stay exactly where you drop it.
+
 A button with nothing bound to it is never touched, and keeps doing whatever Windows \
 already made it do. As soon as you bind anything to a button, the whole button belongs \
 to this app - so if you still want a quick press to do its original job, set Press to \
@@ -446,6 +451,12 @@ class SettingsWindow:
             ttk.Label(tuning, text=hint, foreground="#666").grid(
                 row=row, column=2, sticky="w", padx=(12, 0))
 
+        self.snap_on_drag = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            tuning, variable=self.snap_on_drag, command=self.touch,
+            text="Snap a grabbed window to the screen edge, like dragging a title bar"
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(10, 0))
+
     def _build_detect_tab(self, notebook: ttk.Notebook) -> None:
         tab = ttk.Frame(notebook, padding=12)
         notebook.add(tab, text="  Detect  ")
@@ -503,6 +514,7 @@ class SettingsWindow:
         self.enabled.set(config.enabled)
         self.invert.set(bool(config.setting("invert_thumbwheel", False)))
         self.use_gesture.set(bool(config.setting("use_gesture_button", True)))
+        self.snap_on_drag.set(bool(config.setting("snap_on_drag", True)))
         self.move_threshold.set(int(config.setting("move_threshold", 30)))
         self.tap_milliseconds.set(int(config.setting("tap_milliseconds", 700)))
         self.wheel_notch.set(int(config.setting("wheel_notch", 120)))
@@ -535,6 +547,7 @@ class SettingsWindow:
         self.app.config.settings.update({
             "invert_thumbwheel": bool(self.invert.get()),
             "use_gesture_button": bool(self.use_gesture.get()),
+            "snap_on_drag": bool(self.snap_on_drag.get()),
             "move_threshold": int(self.move_threshold.get()),
             "tap_milliseconds": int(self.tap_milliseconds.get()),
             "wheel_notch": int(self.wheel_notch.get()),

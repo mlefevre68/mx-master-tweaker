@@ -61,6 +61,9 @@ class Drag:
     # Where the window was, and how big, when the button went down.
     start: tuple[int, int, int, int]
     moved: bool = False
+    # Set while the cursor is near a screen edge, to (zone, work_area). Only moving a
+    # window can end in a snap; resizing keeps whatever size you drag it to.
+    snap: tuple[str, tuple[int, int, int, int]] | None = None
 
 
 @dataclass
@@ -295,6 +298,7 @@ class Engine:
         the window is positioned asynchronously, and a window that has gone away is
         dropped rather than retried.
         """
+        snapping = self.config.setting("snap_on_drag", True)
         for source, drag in list(self._drags.items()):
             if not w.user32.IsWindow(drag.hwnd):
                 del self._drags[source]
@@ -309,6 +313,10 @@ class Engine:
                 w.resize_window(drag.hwnd, width + dx, height + dy)
             else:
                 w.move_window(drag.hwnd, left + dx, top + dy)
+                # Resizing keeps whatever size you drag it to; only a plain move can
+                # end in a snap, the same as Windows only offers it from the title bar
+                # and not from a resize handle.
+                drag.snap = w.snap_zone_at(x, y) if snapping else None
 
     def _end_drag(self, source: str) -> bool:
         """Let go. Returns whether this button was actually dragging something."""
@@ -316,7 +324,12 @@ class Engine:
         if drag is None:
             return False
         if drag.moved:
-            self._observe("drag", f"{source} released")
+            if drag.snap and w.user32.IsWindow(drag.hwnd):
+                zone, area = drag.snap
+                w.apply_snap(drag.hwnd, zone, area)
+                self._observe("drag", f"{source} released - snapped {zone}")
+            else:
+                self._observe("drag", f"{source} released")
         # Even a grab that never moved has consumed the button: the press was a grab,
         # not a click, and firing the press action too would be a surprise.
         return True
